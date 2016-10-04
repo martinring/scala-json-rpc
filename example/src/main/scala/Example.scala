@@ -1,43 +1,60 @@
+import java.nio.charset.StandardCharsets
+
 import akka.actor.ActorSystem
-import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.{Flow, Sink, Source, StreamConverters}
+import akka.stream.{ActorMaterializer, ClosedShape}
+import akka.stream.scaladsl.{Flow, GraphDSL, Keep, RunnableGraph, Sink, Source, StreamConverters}
+import akka.util.ByteString
 import io.circe.Json
 import net.flatmap.jsonrpc._
 
+import scala.concurrent.ExecutionContext.Implicits._
+import scala.concurrent.Future
 import scala.io.StdIn
 
 trait ExampleInterface {
-  def sayHello(msg: String, foo: Int): Unit
+  def sayHello(msg: String, foo: Int): Future[String]
 }
 
 object ExampleInterfaceImpl extends ExampleInterface {
-  override def sayHello(msg: String, foo: Int): Unit = println(msg)
+  override def sayHello(msg: String, foo: Int) = Future {
+    Thread.sleep(1000)
+    msg + " " + foo
+  }
 }
 
 object Example extends App {
   implicit val system = ActorSystem()
   implicit val materializer = ActorMaterializer()
 
-  val local = Flow[RequestMessage].collect {
-    case _ if false => Response.Success(Id.Null,Json.Null)
-  }
-
   val remote = Remote[ExampleInterface]
 
-  val localClient = Local[ExampleInterface](ExampleInterfaceImpl)
+  val local = Local[ExampleInterface](ExampleInterfaceImpl)
 
-  val src = Source.single(Notification("sayHello",Some(NamedParameters(Map("msg" -> Json.fromString("hallo weld!"), "foo" -> Json.fromInt(7))))))
+  val clientLocal = Local[ExampleInterface](ExampleInterfaceImpl)
 
-  ((src via localClient) to Sink.foreach(println)).run()
+  val clientRemote = Remote[ExampleInterface]
 
   val connection = Connection.create(local,remote)
 
-  val interface = Connection.open(Source.empty,StreamConverters.fromOutputStream(() => System.out),connection)
+  val clientConnection = Connection.create(clientLocal,clientRemote)
 
-  interface.sayHello("Hallo",8)
+  val out       = Flow[ByteString].map{x => println("server: " + x.decodeString(StandardCharsets.UTF_8)); x}
+  val clientOut = Flow[ByteString].map{x => println("client: " + x.decodeString(StandardCharsets.UTF_8)); x}
+
+  val (interface,interfaceClient) = RunnableGraph.fromGraph(GraphDSL.create(connection,clientConnection) (Keep.both) {
+    implicit b => (connection,clientConnection) =>
+      import GraphDSL.Implicits._
+      val o = b.add(out)
+      val co = b.add(clientOut)
+      connection ~> o  ~> clientConnection
+      connection <~ co <~ clientConnection
+      ClosedShape
+  }).run()
+
+  interface.sayHello("Test",8)
+  interfaceClient.sayHello("Blub",9)
 
   StdIn.readLine()
 
   system.terminate()
-  sys.exit()
 }

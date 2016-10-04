@@ -5,7 +5,7 @@ import akka.actor.{Actor, ActorRef}
 import akka.stream._
 import akka.stream.actor.{ActorPublisher, ActorSubscriber, OneByOneRequestStrategy, RequestStrategy}
 import akka.stream.scaladsl._
-import io.circe.{Decoder, Json}
+import io.circe.{Decoder, Encoder, Json}
 
 import scala.collection.immutable.Seq
 import scala.concurrent.{Future, Promise}
@@ -13,9 +13,9 @@ import scala.language.experimental.macros
 import scala.reflect.macros.whitebox.Context
 
 object Local {
-  def buildFlow(f: RequestMessage => Option[Future[Response]]) =
+  def buildFlow(f: PartialFunction[RequestMessage,Option[Future[Response]]]) =
     Flow[RequestMessage].map(f).collect({
-      case Some(f) => f
+      case Some(json) => json
     }).flatMapMerge(128,Source.fromFuture)
 
   def apply[T](impl: T): Flow[RequestMessage,Response,NotUsed] = macro applyImpl[T]
@@ -37,7 +37,7 @@ object Local {
       val paramss = m.paramLists.map(_.map({ x =>
         val n = c.freshName(x.name.toTermName)
         val t = x.typeSignature
-        (x.pos,n,t)
+        (x.pos,x.name.toString,n,t)
       }))
 
       val argMatch = paramss.flatten.map(_._2)
@@ -46,14 +46,17 @@ object Local {
       val args = c.freshName[TermName]("args")
 
       val paramsDecoded = paramss.map(_.map {
-        case (pos,n,t) =>
-          q"implicitly[io.circe.Decoder[$t]].decodeJson($args(${n.toString})).toTry.get"
+        case (pos,xn,n,t) =>
+          q"implicitly[io.circe.Decoder[$t]].decodeJson($args($xn)).toTry.get"
       })
 
       if (m.returnType =:= c.typeOf[Unit]) {
-        cq"net.flatmap.jsonrpc.Notification(${name.toString}, Some(net.flatmap.jsonrpc.NamedParameters($args))) => { $impl.$name(...$paramsDecoded); None }"
+        cq"net.flatmap.jsonrpc.Notification(${name.toString}, Some(net.flatmap.jsonrpc.NamedParameters($args))) => $impl.$name(...$paramsDecoded); None"
       } else {
-        cq"net.flatmap.jsonrpc.Request(${name.toString}, Some(net.flatmap.jsonrpc.NamedParameters(Map(..$argMatchNamed)))) => { $impl.$name(...$paramsDecoded); None }"
+        val rt = m.returnType.typeArgs.head
+        val id = c.freshName[TermName]("id")
+        val res = q"Some($impl.$name(...$paramsDecoded).map((x) => net.flatmap.jsonrpc.Response.Success($id,implicitly[io.circe.Encoder[$rt]].apply(x))))"
+        cq"net.flatmap.jsonrpc.Request($id, ${name.toString}, Some(net.flatmap.jsonrpc.NamedParameters($args))) => $res"
         //q"case net.flatmap.jsonrpc.Request(${name.toString}, net.flatmap.jsonrpc.NamedParameters(..$argMatchNamed)) => $impl.$name(...$paramsDecoded)"
       }
     }
@@ -156,9 +159,9 @@ object Remote {
         val msg = q"net.flatmap.jsonrpc.Notification(${name.toString}, $params)"
         q"$sendNotification($msg)"
       } else {
-        val t = m.returnType
+        val t = m.returnType.typeArgs.head
         val msg = q"net.flatmap.jsonrpc.Request(net.flatmap.jsonrpc.Id.Null, ${name.toString}, $params)"
-        q"$sendRequest($msg).map(implicitly[io.circe.Decoder[$t]].apply)"
+        q"$sendRequest($msg).map(implicitly[io.circe.Decoder[$t]].decodeJson).map(_.toTry.get)"
       }
 
       val returnType = m.returnType
