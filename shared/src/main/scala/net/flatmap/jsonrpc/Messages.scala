@@ -2,9 +2,11 @@ package net.flatmap.jsonrpc
 
 import io.circe._
 
+import scala.concurrent.Promise
+
 sealed trait Id
 object Id {
-  case class Int(value: scala.Int) extends Id
+  case class Long(value: scala.Long) extends Id
   case class String(value: java.lang.String) extends Id
   case object Null extends Id
 }
@@ -29,10 +31,17 @@ sealed trait RequestMessage extends Message {
     * NOT be used for anything else.
     */
   val method: String
+  def prefixed(prefix: String): RequestMessage = this match {
+    case r: ResolveableRequest => r.copy(method = prefix + method)
+    case r: Request      => r.copy(method = prefix + method)
+    case n: Notification => n.copy(method = prefix + method)
+  }
 }
 
 case class Request(id: Id, method: String, params: Option[ParameterList])
   extends RequestMessage
+
+private [jsonrpc] case class ResolveableRequest(method: String, params: Option[ParameterList], promise: Promise[Json], id: Option[Id] = None) extends RequestMessage
 
 /**
   * A Notification is a Request object without an "id" member. A Request object
@@ -96,7 +105,7 @@ case class ResponseError(
   val code: Int,
   val message: String,
   val data: Option[Json]
-)
+) extends Throwable
 
 object ErrorCodes {
   val ParseError = -32700

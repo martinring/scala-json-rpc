@@ -10,7 +10,7 @@ object Codec {
   implicit val idEncoder = new Encoder[Id] {
     def apply(a: Id): Json = a match {
       case Id.Null => Json.Null
-      case Id.Int(i) => Json.fromInt(i)
+      case Id.Long(i) => Json.fromLong(i)
       case Id.String(s) => Json.fromString(s)
     }
   }
@@ -31,6 +31,7 @@ object Codec {
     override def apply(a: RequestMessage): Json = a match {
       case r: Request => requestEncoder(r)
       case n: Notification => notificationEncoder(n)
+      case r: ResolveableRequest => sys.error("Resolvable Requests are not serializable")
     }
   }
 
@@ -59,7 +60,7 @@ object Codec {
 
   implicit val idDecoder: Decoder[Id] = new Decoder[Id] {
     override def apply(c: HCursor): Result[Id] =
-      c.as[Int].map(Id.Int) orElse c.as[String].map(Id.String)
+      c.as[Long].map(Id.Long) orElse c.as[String].map(Id.String)
   }
 
   implicit val parameterListDecoder = new Decoder[ParameterList] {

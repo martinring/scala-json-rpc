@@ -7,7 +7,6 @@ import akka.util.ByteString
 
 import scala.annotation.tailrec
 
-
 sealed trait FramingState { def append(s: ByteString): FramingState }
 
 case class IncompleteHeader(part: ByteString) extends FramingState {
@@ -17,6 +16,8 @@ case class IncompleteContent(contentLength: Int, part: ByteString) extends Frami
   def append(x: ByteString) = copy(part = part ++ x)
 }
 
+case class FramingException(message: String) extends Throwable(message)
+
 object FramingState {
   @tailrec
   def reduceStream(messages: collection.immutable.Seq[String], connectionState: FramingState):
@@ -24,6 +25,8 @@ object FramingState {
     case IncompleteHeader(part) =>
       val str = part.decodeString(StandardCharsets.US_ASCII)
       val pos = str.indexOf("\r\n\r\n")
+      if (part.size > 65536 && pos < 0)
+        throw new FramingException("header size above 64k")
       if (pos > -1) {
         val parts = str.take(pos).split("\r\n")
         val contentLength = parts.find(_.startsWith("Content-Length: ")).map { x =>

@@ -1,23 +1,20 @@
 package net.flatmap.jsonrpc
 
 import akka.NotUsed
-import akka.actor.ActorSystem
-
-import scala.concurrent.Await
 import akka.stream._
 import akka.stream.scaladsl._
-import akka.util.{ByteString, PrettyDuration}
-import io.circe
-import io.circe.{Json, ParsingFailure, Printer}
+import akka.util.ByteString
+import io.circe._
+import net.flatmap.jsonrpc.util._
 
-import scala.concurrent.duration._
+import scala.collection.immutable.Seq
 
 object Connection { self =>
   private var requestId: Int = 0
 
   def uniqueId = synchronized {
     requestId += 1
-    Id.Int(requestId)
+    Id.Long(requestId)
   }
 
   val jsonPrinter = Printer.noSpaces.copy(dropNullKeys = true)
@@ -35,30 +32,25 @@ object Connection { self =>
   val encoder = Flow[Message]
     .map(Codec.encode.apply)
 
-  val codecParser = BidiFlow.fromFunctions(
+  val jsonParser = BidiFlow.fromFunctions(
     outbound = jsonPrinter.pretty,
-    inbound  = (x: String) => circe.parser.parse(x).toTry.get
-  )
+    inbound  = (x: String) => parser.parse(x).toTry.get
+                                         )
 
   val codecInterpreter = BidiFlow.fromFlows(encoder,decoder)
 
-  val codec = codecInterpreter atop codecParser
-
-  val messagePartitioner = GraphDSL.create() { implicit b =>
-    import GraphDSL.Implicits._
-    val partition = b.add(Partition[Message](2,{
-      case r: RequestMessage => 0
-      case r: Response => 1
-    }))
-
-    val castRequest = b.add(Flow[Message].map(_.asInstanceOf[RequestMessage]))
-    val castRespose = b.add(Flow[Message].map(_.asInstanceOf[Response]))
-
-    partition.out(0) ~> castRequest.in
-    partition.out(1) ~> castRespose.in
-
-    new FanOutShape2(partition.in,castRequest.out,castRespose.out)
-  }
+  /* codec stack
+   *         +------------------------------------+
+   *         | stack                              |
+   *         |                                    |
+   *         |  +----------+         +---------+  |
+   *    ~>   O~~o          |   ~>    |         o~~O   ~>
+   * Message |  | validate |  Json   |  parse  |  | String
+   *    <~   O~~o          |   <~    |         o~~O   <~
+   *         |  +----------+         +---------+  |
+   *         +------------------------------------+
+   */
+  val codec = codecInterpreter atop jsonParser
 
   def create[T](
     local: Flow[RequestMessage,Response,NotUsed],
@@ -82,10 +74,10 @@ object Connection { self =>
     val handler = GraphDSL.create(local,remote) (Keep.right) { implicit b =>
       (local,remote) =>
       import GraphDSL.Implicits._
-      val partition = b.add(messagePartitioner)
+      val partition = b.add(TypePartition[Message,RequestMessage,Response])
       val merge     = b.add(Merge[Message](2))
-      partition.out0 ~> local  ~> merge
-      partition.out1 ~> remote ~> merge
+      partition.out1 ~> local  ~> merge
+      partition.out2 ~> remote ~> merge
       FlowShape(partition.in, merge.out)
     }
 
