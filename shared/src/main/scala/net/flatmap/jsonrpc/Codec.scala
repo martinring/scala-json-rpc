@@ -22,10 +22,10 @@ object Codec {
     }
   }
   implicit val requestEncoder =
-    Encoder.forProduct3("id","method","params")((r: Request) => (r.id,r.method,r.params))
+    Encoder.forProduct4("id","method","params","jsonrpc")((r: Request) => (r.id,r.method,r.params,r.jsonrpc))
 
   implicit val notificationEncoder =
-    Encoder.forProduct2("method","params")((r: Notification) => (r.method,r.params))
+    Encoder.forProduct3("method","params","jsonrpc")((r: Notification) => (r.method,r.params,r.jsonrpc))
 
   implicit val requestMessageEncoder = new Encoder[RequestMessage] {
     override def apply(a: RequestMessage): Json = a match {
@@ -36,13 +36,13 @@ object Codec {
   }
 
   implicit val successEncoder =
-    Encoder.forProduct2("id","result")((r: Response.Success) => (r.id,r.result))
+    Encoder.forProduct3("id","result","jsonrpc")((r: Response.Success) => (r.id,r.result,r.jsonrpc))
 
   implicit val responseErrorEncoder =
     Encoder.forProduct3("code","message","data")((r: ResponseError) => (r.code,r.message,r.data))
 
   implicit val failureEncoder =
-    Encoder.forProduct2("id","error")((r: Response.Failure) => (r.id,r.error))
+    Encoder.forProduct3("id","error","jsonrpc")((r: Response.Failure) => (r.id,r.error,r.jsonrpc))
 
   implicit val responseEncoder = new Encoder[Response] {
     override def apply(a: Response): Json = a match {
