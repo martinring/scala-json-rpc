@@ -39,6 +39,8 @@ object Example extends App {
 
   val clientConnection = Connection.create(clientLocal,clientRemote)
 
+
+
   val out       = Flow[ByteString].map{x => println("#### server ####\n" + x.decodeString(StandardCharsets.UTF_8)); x}
   val clientOut = Flow[ByteString].map{x => println("#### client ####\n" + x.decodeString(StandardCharsets.UTF_8)); x}
 

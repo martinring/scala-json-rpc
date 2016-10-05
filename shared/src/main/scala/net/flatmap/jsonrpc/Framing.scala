@@ -50,16 +50,20 @@ object FramingState {
 }
 
 object Framing {
-  val deframer =
+  val byteStreamDeframer =
     Flow[ByteString].scan[(collection.immutable.Iterable[String],FramingState)]((collection.immutable.Seq.empty,IncompleteHeader(ByteString.empty))) {
       case ((msgs, state), next) =>
         FramingState.reduceStream(collection.immutable.Seq.empty,state.append(next))
     }.map(_._1).flatMapConcat(Source.apply)
 
-  val framer =
+  val byteStreamFramer =
     Flow[String].map(s =>
       ByteString(s"Content-Length: ${s.length}\r\n\r\n",StandardCharsets.US_ASCII.name()) ++
         ByteString(s,StandardCharsets.UTF_8.name()))
 
-  val framing = BidiFlow.fromFlows(framer,deframer)
+  val byteStream = BidiFlow.fromFlows(byteStreamFramer,byteStreamDeframer)
+
+  val none = BidiFlow.fromFunctions(
+    (s: String) => ByteString(s,StandardCharsets.UTF_8.name()),
+    (s: ByteString) => s.decodeString(StandardCharsets.UTF_8))
 }

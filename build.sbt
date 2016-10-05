@@ -13,6 +13,8 @@ lazy val root = project.in(file("."))
 
 lazy val lib = crossProject.in(file("."))
   .settings(
+    bintrayOrganization := Some("flatmap"),
+    licenses += ("MIT", url("http://opensource.org/licenses/MIT")),
     name := "scala-json-rpc",
     version := "0.1",
     scalaVersion := "2.11.8",

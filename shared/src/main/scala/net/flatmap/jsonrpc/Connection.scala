@@ -13,53 +13,11 @@ trait Connection[T] {
 }
 
 object Connection { self =>
-  private var requestId: Int = 0
-
-  def uniqueId = synchronized {
-    requestId += 1
-    Id.Long(requestId)
-  }
-
-  val jsonPrinter = Printer.noSpaces.copy(dropNullKeys = true)
-
-  val parseFailureHandler = Flow[Message].recover {
-    case e: ParsingFailure =>
-      val err = ResponseError(ErrorCodes.ParseError,e.message,None)
-      Response.Failure(Id.Null,err)
-  }
-
-  val decoder = Flow[Json].map {
-    (x: Json) => Codec.decode.decodeJson(x).toTry.get
-  } via parseFailureHandler
-
-  val encoder = Flow[Message]
-    .map(Codec.encode.apply)
-
-  val jsonParser = BidiFlow.fromFunctions(
-    outbound = jsonPrinter.pretty,
-    inbound  = (x: String) => parser.parse(x).toTry.get
-                                         )
-
-  val codecInterpreter = BidiFlow.fromFlows(encoder,decoder)
-
-  /* codec stack
-   *         +------------------------------------+
-   *         | stack                              |
-   *         |                                    |
-   *         |  +----------+         +---------+  |
-   *    ~>   O~~o          |   ~>    |         o~~O   ~>
-   * Message |  | validate |  Json   |  parse  |  | String
-   *    <~   O~~o          |   <~    |         o~~O   <~
-   *         |  +----------+         +---------+  |
-   *         +------------------------------------+
-   */
-  val codec = codecInterpreter atop jsonParser
-
   def create[T](
     local: Flow[RequestMessage,Response,Any],
     remote: Flow[Response,RequestMessage,T],
-    framing: BidiFlow[String,ByteString,ByteString,String,NotUsed] = Framing.framing,
-    codec: BidiFlow[Message,String,String,Message,NotUsed] = codec
+    framing: BidiFlow[String,ByteString,ByteString,String,NotUsed] = Framing.byteStream,
+    codec: BidiFlow[Message,String,String,Message,NotUsed] = Codec.standard
   ): Flow[ByteString,ByteString,T] = {
     /* construct protocol stack
      *         +------------------------------------+

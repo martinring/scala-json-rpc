@@ -1,12 +1,48 @@
 package net.flatmap.jsonrpc
 
+import akka.stream.scaladsl.{BidiFlow, Flow}
 import io.circe.Decoder._
-import io.circe.{Decoder, Encoder, HCursor, Json}
+import io.circe._
 
 /**
   * Created by martin on 28.09.16.
   */
 object Codec {
+  val jsonPrinter = Printer.noSpaces.copy(dropNullKeys = true)
+
+  val parseFailureHandler = Flow[Message].recover {
+    case e: ParsingFailure =>
+      val err = ResponseError(ErrorCodes.ParseError,e.message,None)
+      Response.Failure(Id.Null,err)
+  }
+
+  val decoder = Flow[Json].map {
+    (x: Json) => Codec.decode.decodeJson(x).toTry.get
+  } via parseFailureHandler
+
+  val encoder = Flow[Message]
+    .map(Codec.encode.apply)
+
+  val jsonParser = BidiFlow.fromFunctions(
+    outbound = jsonPrinter.pretty,
+    inbound  = (x: String) => parser.parse(x).toTry.get
+  )
+
+  val codecInterpreter = BidiFlow.fromFlows(encoder,decoder)
+
+  /* codec stack
+   *         +------------------------------------+
+   *         | stack                              |
+   *         |                                    |
+   *         |  +----------+         +---------+  |
+   *    ~>   O~~o          |   ~>    |         o~~O   ~>
+   * Message |  | validate |  Json   |  parse  |  | String
+   *    <~   O~~o          |   <~    |         o~~O   <~
+   *         |  +----------+         +---------+  |
+   *         +------------------------------------+
+   */
+  val standard = codecInterpreter atop jsonParser
+
   implicit val idEncoder = new Encoder[Id] {
     def apply(a: Id): Json = a match {
       case Id.Null => Json.Null
