@@ -10,6 +10,7 @@ import net.flatmap.jsonrpc._
 import scala.concurrent.ExecutionContext.Implicits._
 import scala.concurrent.Future
 import scala.io.StdIn
+import scala.util.Random
 
 trait ExampleInterface {
   def sayHello(msg: String, foo: Int): Future[String]
@@ -38,8 +39,8 @@ object Example extends App {
 
   val clientConnection = Connection.create(clientLocal,clientRemote)
 
-  val out       = Flow[ByteString].map{x => println("server: " + x.decodeString(StandardCharsets.UTF_8)); x}
-  val clientOut = Flow[ByteString].map{x => println("client: " + x.decodeString(StandardCharsets.UTF_8)); x}
+  val out       = Flow[ByteString].map{x => println("#### server ####\n" + x.decodeString(StandardCharsets.UTF_8)); x}
+  val clientOut = Flow[ByteString].map{x => println("#### client ####\n" + x.decodeString(StandardCharsets.UTF_8)); x}
 
   val (interface,interfaceClient) = RunnableGraph.fromGraph(GraphDSL.create(connection,clientConnection) (Keep.both) {
     implicit b => (connection,clientConnection) =>
@@ -51,8 +52,11 @@ object Example extends App {
       ClosedShape
   }).run()
 
-  interface.sayHello("Test",8)
-  interfaceClient.sayHello("Blub",9)
+
+  def f(s: String): Unit = interface.sayHello(s, Random.nextInt(10)).foreach(x => f(x))
+
+  f("Test")
+  f("Test2")
 
   StdIn.readLine()
 

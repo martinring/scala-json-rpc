@@ -1,13 +1,16 @@
 package net.flatmap.jsonrpc
 
-import akka.NotUsed
+import akka.{Done, NotUsed}
 import akka.stream._
 import akka.stream.scaladsl._
 import akka.util.ByteString
 import io.circe._
 import net.flatmap.jsonrpc.util._
 
-import scala.collection.immutable.Seq
+trait Connection[T] {
+  val remote: T
+  def close()
+}
 
 object Connection { self =>
   private var requestId: Int = 0
@@ -53,7 +56,7 @@ object Connection { self =>
   val codec = codecInterpreter atop jsonParser
 
   def create[T](
-    local: Flow[RequestMessage,Response,NotUsed],
+    local: Flow[RequestMessage,Response,Any],
     remote: Flow[Response,RequestMessage,T],
     framing: BidiFlow[String,ByteString,ByteString,String,NotUsed] = Framing.framing,
     codec: BidiFlow[Message,String,String,Message,NotUsed] = codec
@@ -84,6 +87,6 @@ object Connection { self =>
     stack.reversed.joinMat(handler)(Keep.right)
   }
 
-  def open[T](in: Source[ByteString,Any], out: Sink[ByteString,Any], connection: Flow[ByteString,ByteString,T])(implicit materializer: Materializer): T =
+  def open[T](in: Source[ByteString,Any], out: Sink[ByteString,Any], connection: Flow[ByteString,ByteString,Connection[T]])(implicit materializer: Materializer): Connection[T] =
     in.viaMat(connection)(Keep.right).to(out).run()
 }

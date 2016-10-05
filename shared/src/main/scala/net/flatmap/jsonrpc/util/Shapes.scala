@@ -7,10 +7,10 @@ import scala.collection.immutable.Seq
 import scala.reflect.ClassTag
 
 case class TypePartitionShape[In,Out1,Out2](
-                                             in: Inlet[In],
-                                             out1: Outlet[Out1],
-                                             out2: Outlet[Out2]
-                                           ) extends Shape {
+   in: Inlet[In],
+   out1: Outlet[Out1],
+   out2: Outlet[Out2]
+ ) extends Shape {
   override def inlets: Seq[Inlet[_]] = in :: Nil
   override def outlets: Seq[Outlet[_]] = out1 :: out2 :: Nil
   override def deepCopy(): Shape =
