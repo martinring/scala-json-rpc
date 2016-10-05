@@ -82,7 +82,7 @@ Use it:
 val f = server.sayHello("bar")
 ```
 
-To use websockets of http use `Connection.create(local,remote,framing = Framing.none)` and connect flow to websockets via `Connection.open`
+To use websockets or http use `Connection.create(local,remote,framing = Framing.none)` and connect flow to websockets or http requests via `Connection.open`
 
 ### License
 
