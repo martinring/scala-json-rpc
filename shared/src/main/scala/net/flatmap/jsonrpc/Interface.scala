@@ -1,6 +1,5 @@
 package net.flatmap.jsonrpc
 
-import akka.NotUsed
 import akka.actor.{Actor, ActorRef}
 import akka.stream._
 import akka.stream.actor.{ActorPublisher, ActorSubscriber, OneByOneRequestStrategy, RequestStrategy}
@@ -18,17 +17,15 @@ object Local {
       case Some(json) => json
     }).flatMapMerge(128,Source.fromFuture)
 
-  def apply[T](impl: T): Flow[RequestMessage,Response,NotUsed] = macro applyImpl[T]
-  def applyImpl[T: c.WeakTypeTag](c: Context)(impl: c.Expr[T]) = {
+  def apply[L,R](impl: R => L): Flow[RequestMessage,Response,R => L] = macro applyImpl[L,R]
+  def applyImpl[L: c.WeakTypeTag, R: c.WeakTypeTag](c: Context)(impl: c.Expr[R => L]) = {
     import c.universe._
-    val t = c.weakTypeOf[T]
-    val cases = c.weakTypeOf[T].decls.filter(x => x.isMethod && x.isAbstract).map(_.asMethod).map { m =>
+    val t = c.weakTypeOf[L]
+    val cases = c.weakTypeOf[L].decls.filter(x => x.isMethod && x.isPublic).map(_.asMethod).map { m =>
       val name = m.name
 
       if (m.isOverloaded)
         c.error(m.pos, "json rpc methods may not be overloaded")
-      if (!m.isPublic)
-        c.error(m.pos, "json rpc methods must be public")
       if (!m.typeParams.isEmpty)
         c.error(m.pos, "json rpc methods may not use type parameters")
       if (!(m.returnType =:= c.typeOf[Unit] || m.returnType <:< c.typeOf[Future[Any]]))
@@ -60,9 +57,9 @@ object Local {
         //q"case net.flatmap.jsonrpc.Request(${name.toString}, net.flatmap.jsonrpc.NamedParameters(..$argMatchNamed)) => $impl.$name(...$paramsDecoded)"
       }
     }
-    q"""net.flatmap.jsonrpc.Local.buildFlow {
+    q"""net.flatmap.jsonrpc.Local.buildFlow({
           case ..$cases
-        }"""
+        })"""
   }
 }
 
@@ -76,12 +73,12 @@ case class RemoteShape(responses: Inlet[Response], ids: Inlet[Id], requests: Out
 }
 
 object Remote {
-  def buildFlow[T](derive: (Request => Future[Json], Notification => Unit) => T): Flow[Response,RequestMessage,T] = {
+  def buildFlow[R](ids: Iterator[Id], derive: (Request => Future[Json], Notification => Unit) => R): Flow[Response,RequestMessage,R] = {
     val requests = Source.actorRef[RequestMessage](bufferSize = 1024, OverflowStrategy.fail)
 
-    val idProvider = Flow[RequestMessage].scan((0l,Option.empty[RequestMessage]))({
-      case ((id,_),ResolveableRequest(method,params,promise,None)) => (id + 1, Some(ResolveableRequest(method,params,promise,Some(Id.Long(id)))))
-      case ((id,_),other) => (id,Some(other))
+    val idProvider = Flow[RequestMessage].scan((ids,Option.empty[RequestMessage]))({
+      case ((ids,_),ResolveableRequest(method,params,promise,None)) => (ids, Some(ResolveableRequest(method,params,promise,Some(ids.next()))))
+      case ((ids,_),other) => (ids,Some(other))
     }).collect { case (id,Some(x)) => x }
 
     val idRequests = requests.viaMat(idProvider)(Keep.left)
@@ -120,20 +117,18 @@ object Remote {
     }
   }
 
-  def apply[T]: Flow[Response,RequestMessage,T] = macro applyImpl[T]
+  def apply[R](ids: Iterator[Id]): Flow[Response,RequestMessage,R] = macro applyImpl[R]
 
-  def applyImpl[T: c.WeakTypeTag](c: Context) = {
+  def applyImpl[R: c.WeakTypeTag](c: Context)(ids: c.Expr[Iterator[Id]]) = {
     import c.universe._
-    val t = c.weakTypeOf[T]
+    val t = c.weakTypeOf[R]
     val sendNotification = c.freshName[TermName]("sendNotification")
     val sendRequest = c.freshName[TermName]("sendRequest")
-    val impls = c.weakTypeOf[T].decls.filter(x => x.isMethod && x.isAbstract).map(_.asMethod).map { m =>
+    val impls = c.weakTypeOf[R].decls.filter(x => x.isMethod && x.isAbstract).map(_.asMethod).map { m =>
       val name = m.name
 
       if (m.isOverloaded)
         c.error(m.pos, "json rpc methods may not be overloaded")
-      if (!m.isPublic)
-        c.error(m.pos, "json rpc methods must be public")
       if (!m.typeParams.isEmpty)
         c.error(m.pos, "json rpc methods may not use type parameters")
       if (!(m.returnType =:= c.typeOf[Unit] || m.returnType <:< c.typeOf[Future[Any]]))
@@ -167,8 +162,9 @@ object Remote {
       val returnType = m.returnType
       q"override def $name(...$paramdecls) = $body"
     }
-    q"""net.flatmap.jsonrpc.Remote.buildFlow {
+
+    q"""net.flatmap.jsonrpc.Remote.buildFlow($ids, {
           case ($sendRequest,$sendNotification) => new $t { ..$impls }
-        }"""
+        })"""
   }
 }

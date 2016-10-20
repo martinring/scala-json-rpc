@@ -27,19 +27,17 @@ object Example extends App {
   implicit val system = ActorSystem()
   implicit val materializer = ActorMaterializer()
 
-  val remote = Remote[ExampleInterface]
+  val remote = Remote[ExampleInterface](Id.standard)
 
   val local = Local[ExampleInterface](ExampleInterfaceImpl)
 
   val clientLocal = Local[ExampleInterface](ExampleInterfaceImpl)
 
-  val clientRemote = Remote[ExampleInterface]
+  val clientRemote = Remote[ExampleInterface](Id.standard)
 
   val connection = Connection.create(local,remote)
 
   val clientConnection = Connection.create(clientLocal,clientRemote)
-
-
 
   val out       = Flow[ByteString].map{x => println("#### server ####\n" + x.decodeString(StandardCharsets.UTF_8)); x}
   val clientOut = Flow[ByteString].map{x => println("#### client ####\n" + x.decodeString(StandardCharsets.UTF_8)); x}
@@ -53,7 +51,6 @@ object Example extends App {
       connection <~ co <~ clientConnection
       ClosedShape
   }).run()
-
 
   def f(s: String): Unit = interface.sayHello(s, Random.nextInt(10)).foreach(x => f(x))
 

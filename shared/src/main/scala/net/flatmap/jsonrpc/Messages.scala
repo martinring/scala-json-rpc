@@ -9,6 +9,21 @@ object Id {
   case class Long(value: scala.Long) extends Id
   case class String(value: java.lang.String) extends Id
   case object Null extends Id
+
+  def discriminated(n: Int, i: Int): Iterator[Id.Long] =
+    Iterator.iterate(Id.Long(i)) { case Id.Long(x) => Id.Long(x + n) }
+
+  def discriminator(n: Int, i: Int): Id => Boolean = {
+    case Id.Long(x) if x % n == i => true
+    case _ => false
+  }
+
+  def discriminator(n: Int): Id => Int = {
+    case Id.Long(x) => (x % n).toInt
+    case _ => -1
+  }
+
+  def standard: Iterator[Id] = discriminated(1,0)
 }
 
 sealed trait Message {
