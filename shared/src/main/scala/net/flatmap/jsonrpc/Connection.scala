@@ -8,12 +8,11 @@ import io.circe._
 import net.flatmap.jsonrpc.util._
 
 object Connection { self =>
-  def create[L,R](
-                   remote: Flow[Response,RequestMessage,R],
-                   local: Flow[RequestMessage,Response,R => L],
-                   framing: BidiFlow[String,ByteString,ByteString,String,NotUsed] = Framing.byteString,
-                   codec: BidiFlow[Message,String,String,Message,NotUsed] = Codec.standard
-  ): Flow[ByteString,ByteString,(L,R)] = {
+  def create[R](local: Flow[RequestMessage,Response,Any],
+                remote: Flow[Response,RequestMessage,R],
+                framing: BidiFlow[String,ByteString,ByteString,String,NotUsed] = Framing.byteString,
+                codec: BidiFlow[Message,String,String,Message,NotUsed] = Codec.standard
+  ): Flow[ByteString,ByteString,R] = {
     /* construct protocol stack
      *         +------------------------------------+
      *         | stack                              |
@@ -27,7 +26,7 @@ object Connection { self =>
      */
     val stack = codec atop framing
 
-    val handler = GraphDSL.create(local, remote) ((l,r) => (l(r),r)) { implicit b =>
+    val handler = GraphDSL.create(local, remote) (Keep.right) { implicit b =>
       (local, remote) =>
       import GraphDSL.Implicits._
 
