@@ -120,7 +120,9 @@ case class ResponseError(
   val code: Int,
   val message: String,
   val data: Option[Json]
-) extends Throwable
+) extends Throwable {
+  override def getMessage: String = message
+}
 
 object ErrorCodes {
   val ParseError = -32700

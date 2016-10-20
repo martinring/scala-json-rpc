@@ -1,27 +1,30 @@
 package net.flatmap.jsonrpc
 
-import akka.actor.{Actor, ActorRef}
+import akka.NotUsed
+import akka.actor._
 import akka.stream._
-import akka.stream.actor.{ActorPublisher, ActorSubscriber, OneByOneRequestStrategy, RequestStrategy}
 import akka.stream.scaladsl._
-import io.circe.{Decoder, Encoder, Json}
+import io.circe._
 
-import scala.collection.immutable.Seq
-import scala.concurrent.{Future, Promise}
+import scala.concurrent._
 import scala.language.experimental.macros
 import scala.reflect.macros.whitebox.Context
 
 object Local {
-  def buildFlow(f: PartialFunction[RequestMessage,Option[Future[Response]]]) =
+  def buildFlow(f: PartialFunction[RequestMessage,
+    Option[Future[Response]]]) =
     Flow[RequestMessage].map(f).collect({
       case Some(json) => json
     }).flatMapMerge(128,Source.fromFuture)
 
-  def apply[L,R](impl: R => L): Flow[RequestMessage,Response,R => L] = macro applyImpl[L,R]
-  def applyImpl[L: c.WeakTypeTag, R: c.WeakTypeTag](c: Context)(impl: c.Expr[R => L]) = {
+  def apply[L](impl: L): Flow[RequestMessage, Response,NotUsed] =
+    macro applyImpl[L]
+
+  def applyImpl[L: c.WeakTypeTag]
+    (c: Context)(impl: c.Expr[L]) = {
     import c.universe._
     val t = c.weakTypeOf[L]
-    val cases = c.weakTypeOf[L].decls.filter(x => x.isMethod && x.isPublic).map(_.asMethod).map { m =>
+    val cases = c.weakTypeOf[L].decls.filter(x => x.isMethod && x.isAbstract).map(_.asMethod).map { m =>
       val name = m.name
 
       if (m.isOverloaded)
@@ -63,17 +66,9 @@ object Local {
   }
 }
 
-case class RemoteShape(responses: Inlet[Response], ids: Inlet[Id], requests: Outlet[RequestMessage]) extends Shape {
-  override def inlets: Seq[Inlet[_]] = responses :: ids :: Nil
-  override def outlets: Seq[Outlet[_]] = requests :: Nil
-  override def deepCopy(): Shape =
-    RemoteShape(responses.carbonCopy(),ids.carbonCopy(),requests.carbonCopy())
-  override def copyFromPorts(inlets: Seq[Inlet[_]], outlets: Seq[Outlet[_]]): Shape =
-    RemoteShape(inlets(0).as[Response],inlets(1).as[Id],outlets(0).as[RequestMessage])
-}
-
 object Remote {
-  def buildFlow[R](ids: Iterator[Id], derive: (Request => Future[Json], Notification => Unit) => R): Flow[Response,RequestMessage,R] = {
+  def buildFlow[R](ids: Iterator[Id], derive: (Request => Future[Json],
+    Notification => Unit) => R)(implicit ec: ExecutionContext): Flow[Response, RequestMessage,R] = {
     val requests = Source.actorRef[RequestMessage](bufferSize = 1024, OverflowStrategy.fail)
 
     val idProvider = Flow[RequestMessage].scan((ids,Option.empty[RequestMessage]))({
@@ -105,9 +100,13 @@ object Remote {
           (pending - id, None)
       }).map(_._2).collect[RequestMessage] { case Some(x) => x }
 
-    val flow = Flow[Response].mergeMat(idRequests)(Keep.right).viaMat(reqCycle)(Keep.left)
+    val flow = Flow[Response]
+      .watchTermination()(Keep.right)
+      .mergeMat(idRequests)(Keep.both)
+      .viaMat(reqCycle)(Keep.left)
 
-    flow.mapMaterializedValue { ref =>
+    flow.mapMaterializedValue { case (f,ref) =>
+      f.onComplete(_ => ref ! PoisonPill)
       derive({
         case Request(id,method,params) =>
           val p = Promise[Json]
@@ -124,7 +123,10 @@ object Remote {
     val t = c.weakTypeOf[R]
     val sendNotification = c.freshName[TermName]("sendNotification")
     val sendRequest = c.freshName[TermName]("sendRequest")
-    val impls = c.weakTypeOf[R].decls.filter(x => x.isMethod && x.isAbstract).map(_.asMethod).map { m =>
+    val abstractMethods = c.weakTypeOf[R].decls.filter(x => x.isMethod && x.isAbstract).map(_.asMethod)
+    if (abstractMethods.map(_.name).toList.distinct.size < abstractMethods.size)
+      c.error(c.enclosingPosition, "json rpc methods may not be overloaded")
+    val impls = abstractMethods.map { m =>
       val name = m.name
 
       if (m.isOverloaded)

@@ -9,10 +9,10 @@ import net.flatmap.jsonrpc.util._
 
 object Connection { self =>
   def create[L,R](
-    remote: Flow[Response,RequestMessage,R],
-    local: Flow[RequestMessage,Response,R => L],
-    framing: BidiFlow[String,ByteString,ByteString,String,NotUsed] = Framing.byteStream,
-    codec: BidiFlow[Message,String,String,Message,NotUsed] = Codec.standard
+                   remote: Flow[Response,RequestMessage,R],
+                   local: Flow[RequestMessage,Response,R => L],
+                   framing: BidiFlow[String,ByteString,ByteString,String,NotUsed] = Framing.byteString,
+                   codec: BidiFlow[Message,String,String,Message,NotUsed] = Codec.standard
   ): Flow[ByteString,ByteString,(L,R)] = {
     /* construct protocol stack
      *         +------------------------------------+
