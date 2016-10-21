@@ -22,8 +22,8 @@ lazy val lib: CrossProject = crossProject.in(file("."))
   .settings(
     bintrayOrganization := Some("flatmap"),
     licenses += ("MIT", url("http://opensource.org/licenses/MIT")),
-    name := "scala-json-rpc",
-    version := "0.2.2",
+    name := "jsonrpc",
+    version := "0.3.0",
     sourceDirectories in Test := Seq.empty,
     scalaVersion := "2.11.8",
     organization := "net.flatmap",
