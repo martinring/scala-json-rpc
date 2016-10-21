@@ -27,7 +27,7 @@ object ExampleInterfaces {
   }
 
   trait Nested {
-    def foo(): Future[Int]
+    def foo: Future[Int]
   }
 
   trait OverloadError {
@@ -121,7 +121,7 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
     val sink = Sink.seq[RequestMessage]
     val ((p,interface), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
-    interface.nested.foo()
+    interface.nested.foo
     p.success(None)
     whenReady(f) { x =>
       x should have length 1
