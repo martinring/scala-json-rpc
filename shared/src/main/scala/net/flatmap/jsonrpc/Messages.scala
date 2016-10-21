@@ -35,8 +35,13 @@ sealed trait Message {
 }
 
 sealed trait ParameterList
-case class PositionedParameters(val params: IndexedSeq[Json]) extends ParameterList
-case class NamedParameters(val params: Map[String,Json]) extends ParameterList
+case object NoParameters extends ParameterList
+case class PositionedParameters(val params: IndexedSeq[Json]) extends ParameterList {
+  require(params.nonEmpty)
+}
+case class NamedParameters(val params: Map[String,Json]) extends ParameterList {
+  require(params.nonEmpty)
+}
 
 sealed trait RequestMessage extends Message {
   /**
@@ -53,10 +58,10 @@ sealed trait RequestMessage extends Message {
   }
 }
 
-case class Request(id: Id, method: String, params: Option[ParameterList])
+case class Request(id: Id, method: String, params: ParameterList)
   extends RequestMessage
 
-private [jsonrpc] case class ResolveableRequest(method: String, params: Option[ParameterList], promise: Promise[Json], id: Option[Id] = None) extends RequestMessage
+private [jsonrpc] case class ResolveableRequest(method: String, params: ParameterList, promise: Promise[Json], id: Option[Id] = None) extends RequestMessage
 
 /**
   * A Notification is a Request object without an "id" member. A Request object
@@ -76,7 +81,7 @@ private [jsonrpc] case class ResolveableRequest(method: String, params: Option[P
   *               during the invocation of the method. This member MAY be
   *               omitted.
   */
-case class Notification(method: String, params: Option[ParameterList])
+case class Notification(method: String, params: ParameterList)
   extends RequestMessage
 
 sealed trait Response extends Message {

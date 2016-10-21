@@ -6,9 +6,163 @@ import akka.stream._
 import akka.stream.scaladsl._
 import io.circe._
 
+import scala.collection.GenTraversableOnce
 import scala.concurrent._
 import scala.language.experimental.macros
 import scala.reflect.macros.whitebox.Context
+
+class RPCInterfaceMacros(val c: Context) {
+  import c.universe._
+
+  def abstractMethodsOf(t: c.Type) = for {
+    decl <- t.decls if decl.isMethod && decl.isAbstract
+  } yield decl.asMethod
+
+  def checkValid(m: MethodSymbol) = {
+    if (m.isOverloaded)
+      c.abort(m.pos, "json rpc methods may not be overloaded")
+    if (!m.typeParams.isEmpty)
+      c.abort(m.pos, "json rpc methods may not use type parameters")
+    if (!(m.returnType =:= c.typeOf[Unit] || m.returnType <:< c.typeOf[Future[Any]]))
+      c.abort(m.pos, "json rpc methods can either return Unit or Future[T]")
+  }
+
+  def rpcNameOf(m: MethodSymbol) =
+    m.annotations.map(_.tree).collectFirst {
+      case tree@Apply(annon,List(Literal(Constant(name: String))))
+        if tree.tpe =:= c.typeOf[JsonRPC] => name
+    } getOrElse m.name.toString
+
+  def rpcNamespaceOf(m: MethodSymbol) =
+    m.annotations.map(_.tree).collectFirst {
+      case tree@Apply(annon,List(Literal(Constant(name: String))))
+        if tree.tpe =:= c.typeOf[JsonRPCNamespace] => name
+    }
+
+  def localCases(select: Tree, prefix: String = "")(m: MethodSymbol): Seq[CaseDef] =
+    rpcNamespaceOf(m).fold[Seq[CaseDef]] {
+      val name = prefix + rpcNameOf(m)
+      checkValid(m)
+
+      val paramss = m.paramLists.map(_.map({ x =>
+        val n = c.freshName(x.name.toTermName)
+        val t = x.typeSignature
+        (x.pos, x.name.toString, n, t)
+      }))
+
+      val argMatch = paramss.flatten.map(_._2)
+      val argMatchNamed = argMatch.map(x => pq"${x.toString} -> $x")
+
+      val args = c.freshName[TermName]("args")
+
+      val paramsDecodedNamed = paramss.map(_.map {
+        case (pos, xn, n, t) =>
+          q"implicitly[io.circe.Decoder[$t]].decodeJson($args($xn)).toTry.get"
+      })
+
+      var i = -1
+      val paramsDecodedIndexed = paramss.map(_.map {
+        case (pos, xn, n, t) =>
+          i += 1
+          q"implicitly[io.circe.Decoder[$t]].decodeJson($args($i)).toTry.get"
+      })
+
+      if (m.returnType =:= c.typeOf[Unit]) {
+        if (argMatch.isEmpty)
+          Seq(cq"net.flatmap.jsonrpc.Notification($name,net.flatmap.jsonrpc.NoParameters) => $select.${m.name}(...$paramsDecodedNamed); None")
+        else
+          Seq(
+            cq"net.flatmap.jsonrpc.Notification($name, net.flatmap.jsonrpc.NamedParameters($args))      => $select.${m.name}(...$paramsDecodedNamed); None",
+            cq"net.flatmap.jsonrpc.Notification($name, net.flatmap.jsonrpc.PositionedParameters($args)) => $select.${m.name}(...$paramsDecodedIndexed); None")
+      } else {
+        val id = c.freshName[TermName]("id")
+        val rt = m.returnType.typeArgs.head
+        if (argMatch.isEmpty) {
+          val res = q"Some($select.${m.name}(...$paramsDecodedNamed).map((x) => net.flatmap.jsonrpc.Response.Success($id,implicitly[io.circe.Encoder[$rt]].apply(x))))"
+          Seq(cq"net.flatmap.jsonrpc.Request($id, $name,net.flatmap.jsonrpc.NoParameters) => $res")
+        } else Seq({
+          val res = q"Some($select.${m.name}(...$paramsDecodedNamed).map((x) => net.flatmap.jsonrpc.Response.Success($id,implicitly[io.circe.Encoder[$rt]].apply(x))))"
+          cq"net.flatmap.jsonrpc.Request($id, $name, net.flatmap.jsonrpc.NamedParameters($args)) => $res"
+        },{
+          val res = q"Some($select.${m.name}(...$paramsDecodedIndexed).map((x) => net.flatmap.jsonrpc.Response.Success($id,implicitly[io.circe.Encoder[$rt]].apply(x))))"
+          cq"net.flatmap.jsonrpc.Request($id, $name, net.flatmap.jsonrpc.PositionedParameters($args)) => $res"
+        })
+      }
+    } { case namespace =>
+      val t = m.returnType
+      abstractMethodsOf(t).flatMap(localCases(q"$select.${m.name}",prefix + namespace)).toSeq
+    }
+
+  def localImpl[L: c.WeakTypeTag](impl: c.Expr[L]) = {
+    import c.universe._
+    val t = c.weakTypeOf[L]
+
+    val cases = abstractMethodsOf(t).flatMap(localCases(q"$impl"))
+
+    q"""net.flatmap.jsonrpc.Local.buildFlow({
+          case ..$cases
+        })"""
+  }
+
+  def remoteImpls(sendNotification: TermName, sendRequest: TermName, prefix: String = "")(m: MethodSymbol): c.Tree =
+    rpcNamespaceOf(m).fold {
+      val name = prefix + rpcNameOf(m)
+      checkValid(m)
+
+      val paramss = m.paramLists.map(_.map({ x =>
+        val n = x.name.toTermName
+        val t = x.typeSignature
+        (x.pos, n, t)
+      }))
+
+      val paramdecls = paramss.map(_.map({ case (pos, n, t) => q"$n: $t" }))
+
+      val args = paramss.flatten.map {
+        case (pos, n, t) =>
+          val s = n.toString
+          q"$s -> implicitly[io.circe.Encoder[$t]].apply($n)"
+      }
+
+      val params =
+        if (args.isEmpty) q"net.flatmap.jsonrpc.NoParameters"
+        else q"net.flatmap.jsonrpc.NamedParameters(scala.collection.immutable.Map(..$args))"
+
+      val body = if (m.returnType =:= c.typeOf[Unit]) {
+        val msg = q"net.flatmap.jsonrpc.Notification($name, $params)"
+        q"$sendNotification($msg)"
+      } else {
+        val t = m.returnType.typeArgs.head
+        val msg = q"net.flatmap.jsonrpc.Request(net.flatmap.jsonrpc.Id.Null, $name, $params)"
+        q"$sendRequest($msg).map(implicitly[io.circe.Decoder[$t]].decodeJson).map(_.toTry.get)"
+      }
+
+      val returnType = m.returnType
+      q"override def ${m.name}(...$paramdecls) = $body"
+    } { case namespace =>
+      val t = m.returnType
+      val paramss = m.paramLists.map(_.map({ x =>
+        val n = x.name.toTermName
+        val t = x.typeSignature
+        (x.pos, n, t)
+      }))
+      val paramdecls = paramss.map(_.map({ case (pos, n, t) => q"$n: $t" }))
+      val impls = abstractMethodsOf(t).map(remoteImpls(sendNotification,sendRequest,prefix + namespace))
+      q"override def ${m.name}(...$paramdecls) = new $t { ..$impls }"
+    }
+
+  def remoteImpl[R: c.WeakTypeTag](ids: c.Expr[Iterator[Id]]) = {
+    import c.universe._
+    val t = c.weakTypeOf[R]
+    val sendNotification = c.freshName[TermName]("sendNotification")
+    val sendRequest = c.freshName[TermName]("sendRequest")
+
+    val impls = abstractMethodsOf(t).map(remoteImpls(sendNotification,sendRequest))
+
+    q"""net.flatmap.jsonrpc.Remote.buildFlow($ids, {
+          case ($sendRequest,$sendNotification) => new $t { ..$impls }
+        })"""
+  }
+}
 
 object Local {
   def buildFlow(f: PartialFunction[RequestMessage,
@@ -18,52 +172,7 @@ object Local {
     }).flatMapMerge(128,Source.fromFuture)
 
   def apply[L](impl: L): Flow[RequestMessage, Response,NotUsed] =
-    macro applyImpl[L]
-
-  def applyImpl[L: c.WeakTypeTag]
-    (c: Context)(impl: c.Expr[L]) = {
-    import c.universe._
-    val t = c.weakTypeOf[L]
-    val cases = c.weakTypeOf[L].decls.filter(x => x.isMethod && x.isAbstract).map(_.asMethod).map { m =>
-      val name = m.name
-
-      if (m.isOverloaded)
-        c.error(m.pos, "json rpc methods may not be overloaded")
-      if (!m.typeParams.isEmpty)
-        c.error(m.pos, "json rpc methods may not use type parameters")
-      if (!(m.returnType =:= c.typeOf[Unit] || m.returnType <:< c.typeOf[Future[Any]]))
-        c.error(m.pos, "json rpc methods can either return Unit or Future[T]")
-
-      val paramss = m.paramLists.map(_.map({ x =>
-        val n = c.freshName(x.name.toTermName)
-        val t = x.typeSignature
-        (x.pos,x.name.toString,n,t)
-      }))
-
-      val argMatch = paramss.flatten.map(_._2)
-      val argMatchNamed = argMatch.map(x => pq"${x.toString} -> $x")
-
-      val args = c.freshName[TermName]("args")
-
-      val paramsDecoded = paramss.map(_.map {
-        case (pos,xn,n,t) =>
-          q"implicitly[io.circe.Decoder[$t]].decodeJson($args($xn)).toTry.get"
-      })
-
-      if (m.returnType =:= c.typeOf[Unit]) {
-        cq"net.flatmap.jsonrpc.Notification(${name.toString}, Some(net.flatmap.jsonrpc.NamedParameters($args))) => $impl.$name(...$paramsDecoded); None"
-      } else {
-        val rt = m.returnType.typeArgs.head
-        val id = c.freshName[TermName]("id")
-        val res = q"Some($impl.$name(...$paramsDecoded).map((x) => net.flatmap.jsonrpc.Response.Success($id,implicitly[io.circe.Encoder[$rt]].apply(x))))"
-        cq"net.flatmap.jsonrpc.Request($id, ${name.toString}, Some(net.flatmap.jsonrpc.NamedParameters($args))) => $res"
-        //q"case net.flatmap.jsonrpc.Request(${name.toString}, net.flatmap.jsonrpc.NamedParameters(..$argMatchNamed)) => $impl.$name(...$paramsDecoded)"
-      }
-    }
-    q"""net.flatmap.jsonrpc.Local.buildFlow({
-          case ..$cases
-        })"""
-  }
+    macro RPCInterfaceMacros.localImpl[L]
 }
 
 object Remote {
@@ -116,57 +225,6 @@ object Remote {
     }
   }
 
-  def apply[R](ids: Iterator[Id]): Flow[Response,RequestMessage,R] = macro applyImpl[R]
-
-  def applyImpl[R: c.WeakTypeTag](c: Context)(ids: c.Expr[Iterator[Id]]) = {
-    import c.universe._
-    val t = c.weakTypeOf[R]
-    val sendNotification = c.freshName[TermName]("sendNotification")
-    val sendRequest = c.freshName[TermName]("sendRequest")
-    val abstractMethods = c.weakTypeOf[R].decls.filter(x => x.isMethod && x.isAbstract).map(_.asMethod)
-    if (abstractMethods.map(_.name).toList.distinct.size < abstractMethods.size)
-      c.error(c.enclosingPosition, "json rpc methods may not be overloaded")
-    val impls = abstractMethods.map { m =>
-      val name = m.name
-
-      if (m.isOverloaded)
-        c.error(m.pos, "json rpc methods may not be overloaded")
-      if (!m.typeParams.isEmpty)
-        c.error(m.pos, "json rpc methods may not use type parameters")
-      if (!(m.returnType =:= c.typeOf[Unit] || m.returnType <:< c.typeOf[Future[Any]]))
-        c.error(m.pos, "json rpc methods can either return Unit or Future[T]")
-
-      val paramss = m.paramLists.map(_.map({ x =>
-        val n = x.name.toTermName
-        val t = x.typeSignature
-        (x.pos,n,t)
-      }))
-
-      val paramdecls = paramss.map(_.map({ case (pos,n,t) => q"$n: $t"}))
-
-      val args = paramss.flatten.map {
-        case (pos,n,t) =>
-          val s = n.toString
-          q"$s -> implicitly[io.circe.Encoder[$t]].apply($n)"
-      }
-
-      val params = q"Some(net.flatmap.jsonrpc.NamedParameters(scala.collection.immutable.Map(..$args)))"
-
-      val body = if (m.returnType =:= c.typeOf[Unit]) {
-        val msg = q"net.flatmap.jsonrpc.Notification(${name.toString}, $params)"
-        q"$sendNotification($msg)"
-      } else {
-        val t = m.returnType.typeArgs.head
-        val msg = q"net.flatmap.jsonrpc.Request(net.flatmap.jsonrpc.Id.Null, ${name.toString}, $params)"
-        q"$sendRequest($msg).map(implicitly[io.circe.Decoder[$t]].decodeJson).map(_.toTry.get)"
-      }
-
-      val returnType = m.returnType
-      q"override def $name(...$paramdecls) = $body"
-    }
-
-    q"""net.flatmap.jsonrpc.Remote.buildFlow($ids, {
-          case ($sendRequest,$sendNotification) => new $t { ..$impls }
-        })"""
-  }
+  def apply[R](ids: Iterator[Id]): Flow[Response,RequestMessage,R] =
+    macro RPCInterfaceMacros.remoteImpl[R]
 }

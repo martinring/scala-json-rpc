@@ -15,9 +15,19 @@ object ExampleInterfaces {
   trait Simple {
     def f(x: Int): Future[String]
     def g(x: String)
+
+    @JsonRPC("blub") def h(x: String)
+
     def concrete(x: String)
                 (implicit ec: ExecutionContext) =
       f(x.toInt).map(_.toInt)
+
+    @JsonRPCNamespace("nested/")
+    def nested: Nested
+  }
+
+  trait Nested {
+    def foo(): Future[Int]
   }
 
   trait OverloadError {
@@ -63,8 +73,8 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
     whenReady(f) { x =>
       x should have length 2
       x shouldBe Seq(
-        Request(Id.Long(0),"f",Some(NamedParameters(Map("x" -> Json.fromInt(42))))),
-        Request(Id.Long(1),"f",Some(NamedParameters(Map("x" -> Json.fromInt(17)))))
+        Request(Id.Long(0),"f",NamedParameters(Map("x" -> Json.fromInt(42)))),
+        Request(Id.Long(1),"f",NamedParameters(Map("x" -> Json.fromInt(17))))
       )
     }
   }
@@ -82,8 +92,41 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
     whenReady(f) { x =>
       x should have length 2
       x shouldBe Seq(
-        Notification("g",Some(NamedParameters(Map("x" -> Json.fromString("foo"))))),
-        Notification("g",Some(NamedParameters(Map("x" -> Json.fromString("bar")))))
+        Notification("g",NamedParameters(Map("x" -> Json.fromString("foo")))),
+        Notification("g",NamedParameters(Map("x" -> Json.fromString("bar"))))
+      )
+    }
+  }
+
+  it should "respect custom name annotations" in {
+    val remote = Remote[ExampleInterfaces.Simple](Id.standard)
+    val source = Source.maybe[Response]
+    val sink = Sink.seq[RequestMessage]
+    val ((p,interface), f) =
+      source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
+    interface.h("blubber")
+    p.success(None)
+    whenReady(f) { x =>
+      x should have length 1
+      x shouldBe Seq(
+        Notification("blub",NamedParameters(Map("x" -> Json.fromString
+        ("blubber"))))
+      )
+    }
+  }
+
+  it should "implement nested interfaces" in {
+    val remote = Remote[ExampleInterfaces.Simple](Id.standard)
+    val source = Source.maybe[Response]
+    val sink = Sink.seq[RequestMessage]
+    val ((p,interface), f) =
+      source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
+    interface.nested.foo()
+    p.success(None)
+    whenReady(f) { x =>
+      x should have length 1
+      x shouldBe Seq(
+        Request(Id.Long(0),"nested/foo",NoParameters)
       )
     }
   }
@@ -116,7 +159,7 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
     whenReady(f) { x =>
       x should have length 1
       x shouldBe Seq(
-        Request(Id.Long(0),"f",Some(NamedParameters(Map("x" -> Json.fromInt(42)))))
+        Request(Id.Long(0),"f",NamedParameters(Map("x" -> Json.fromInt(42))))
       )
     }
     whenReady(x) { r => r shouldEqual 17 }

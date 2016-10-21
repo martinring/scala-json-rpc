@@ -1,6 +1,7 @@
 package net.flatmap.jsonrpc
 
 import akka.stream.scaladsl.{BidiFlow, Flow}
+import cats.data.Xor
 import io.circe.Decoder._
 import io.circe._
 
@@ -53,10 +54,12 @@ object Codec {
 
   implicit val parameterListEncoder = new Encoder[ParameterList] {
     override def apply(a: ParameterList): Json = a match {
+      case NoParameters => Json.Null
       case NamedParameters(params) => Json.obj(params.toSeq :_*)
       case PositionedParameters(params) => Json.arr(params :_*)
     }
   }
+
   implicit val requestEncoder =
     Encoder.forProduct4("id","method","params","jsonrpc")((r: Request) => (r.id,r.method,r.params,r.jsonrpc))
 
@@ -99,11 +102,18 @@ object Codec {
       c.as[Long].map(Id.Long) orElse c.as[String].map(Id.String)
   }
 
-  implicit val parameterListDecoder = new Decoder[ParameterList] {
-    override def apply(c: HCursor): Result[ParameterList] =
-      c.as[IndexedSeq[Json]].map(PositionedParameters) orElse
-      c.as[Map[String,Json]].map(NamedParameters)
-  }
+  private[this] final val rightNoParams: Xor[DecodingFailure,ParameterList] =
+    Xor.right(NoParameters)
+
+  implicit val parameterListDecoder: Decoder[ParameterList] =
+    Decoder.withReattempt(c => if(c.succeeded) {
+      if (c.any.focus.isNull) rightNoParams else {
+        c.any.as[Map[String,Json]].map(NamedParameters) orElse
+        c.any.as[IndexedSeq[Json]].map(PositionedParameters)
+      }
+    } else if (!c.history.takeWhile(_.failed).exists(_.incorrectFocus)) rightNoParams else {
+      Xor.left(DecodingFailure("[A]ParameterList[A]", c.history))
+    })
 
   implicit val requestDecoder =
     Decoder.forProduct3("id","method","params")(Request.apply)

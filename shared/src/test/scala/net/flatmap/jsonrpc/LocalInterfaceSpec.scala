@@ -4,6 +4,7 @@ import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl._
 import io.circe.Json
+import net.flatmap.jsonrpc.ExampleInterfaces.Nested
 import org.scalatest._
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.time._
@@ -15,6 +16,11 @@ object ExampleImplementations {
     var lastCallTog = ""
     def f(x: Int): Future[String] = Future.successful(x.toString)
     def g(x: String) = lastCallTog = x
+
+    def nested = new Nested {
+      override def foo(): Future[Int] = Future.successful(42)
+    }
+    override def h(x: String): Unit = ()
   }
 }
 
@@ -34,8 +40,8 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
     val sink = Sink.seq[Response]
     val (p, f) =
       source.viaMat(local)(Keep.left).toMat(sink)(Keep.both).run()
-    p.success(Some(Request(Id.Long(0),"f",Some(NamedParameters(Map("x" ->
-      Json.fromInt(42)))))))
+    p.success(Some(Request(Id.Long(0),"f",NamedParameters(Map("x" ->
+      Json.fromInt(42))))))
     whenReady(f) { x =>
       x should have length 1
       x shouldBe Seq(
@@ -53,11 +59,43 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
     val sink = Sink.seq[Response]
     val (p, f) =
       source.viaMat(local)(Keep.left).toMat(sink)(Keep.both).run()
-    p.success(Some(Notification("g",Some(NamedParameters(Map("x" ->
-      Json.fromString("42")))))))
+    p.success(Some(Notification("g",NamedParameters(Map("x" ->
+      Json.fromString("42"))))))
     whenReady(f) { x =>
       x shouldBe empty
       interface.lastCallTog shouldBe "42"
+    }
+  }
+
+  it should "handle positioned parameters" in {
+    val local =
+      Local[ExampleInterfaces.Simple](new ExampleImplementations.Simple)
+    val source = Source.maybe[RequestMessage]
+    val sink = Sink.seq[Response]
+    val (p, f) =
+      source.viaMat(local)(Keep.left).toMat(sink)(Keep.both).run()
+    p.success(Some(Request(Id.Long(0),"f",PositionedParameters(Array(Json.fromInt(42))))))
+    whenReady(f) { x =>
+      x should have length 1
+      x shouldBe Seq(
+        Response.Success(Id.Long(0),Json.fromString("42"))
+      )
+    }
+  }
+
+  it should "handle nested namespaces" in {
+    val local =
+      Local[ExampleInterfaces.Simple](new ExampleImplementations.Simple)
+    val source = Source.maybe[RequestMessage]
+    val sink = Sink.seq[Response]
+    val (p, f) =
+      source.viaMat(local)(Keep.left).toMat(sink)(Keep.both).run()
+    p.success(Some(Request(Id.Long(0),"nested/foo",NoParameters)))
+    whenReady(f) { x =>
+      x should have length 1
+      x shouldBe Seq(
+        Response.Success(Id.Long(0),Json.fromInt(42))
+      )
     }
   }
 
