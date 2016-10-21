@@ -1,6 +1,6 @@
 package net.flatmap.jsonrpc
 
-import scala.annotation.StaticAnnotation
+import scala.annotation.ClassfileAnnotation
 
-case class JsonRPC(name: String) extends StaticAnnotation
-case class JsonRPCNamespace(prefix: String) extends StaticAnnotation
+case class JsonRPC(name: String) extends ClassfileAnnotation
+case class JsonRPCNamespace(prefix: String) extends ClassfileAnnotation
