@@ -15,7 +15,7 @@ class RPCInterfaceMacros(val c: Context) {
   import c.universe._
 
   def abstractMethodsOf(t: c.Type) = for {
-    decl <- t.decls if decl.isMethod && decl.isAbstract
+    decl <- t.decls if decl.info != null && decl.isMethod && decl.isAbstract
   } yield decl.asMethod
 
   def checkValid(m: MethodSymbol) = {

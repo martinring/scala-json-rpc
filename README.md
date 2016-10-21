@@ -16,10 +16,10 @@ Add the following to your sbt build definition
 resolvers += Resolver.bintrayRepo("flatmap", "maven")
 
 // For scala.js projects
-libraryDependencies += "net.flatmap" %%% "jsonrpc" % "0.3.0"
+libraryDependencies += "net.flatmap" %%% "jsonrpc" % "0.3.1"
 
 // For ordinary Scala projects
-libraryDependencies += "net.flatmap" %% "jsonrpc" % "0.3.0"
+libraryDependencies += "net.flatmap" %% "jsonrpc" % "0.3.1"
 ```
 
 ### Defining a Protocol
