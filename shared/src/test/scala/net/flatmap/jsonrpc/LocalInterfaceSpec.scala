@@ -21,6 +21,9 @@ object ExampleImplementations {
       override def foo(): Future[Int] = Future.successful(42)
     }
     override def h(x: String): Unit = ()
+
+    def optional(f: String, y: Option[Int]): Future[String] =
+      Future.successful(List.fill(y.getOrElse(1))(f).mkString)
   }
 }
 
@@ -95,6 +98,23 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
       x should have length 1
       x shouldBe Seq(
         Response.Success(Id.Long(0),Json.fromInt(42))
+      )
+    }
+  }
+
+  it should "handle omitted optional parameters" in {
+    val local =
+      Local[ExampleInterfaces.Simple](new ExampleImplementations.Simple)
+    val source = Source.maybe[RequestMessage]
+    val sink = Sink.seq[Response]
+    val (p, f) =
+      source.viaMat(local)(Keep.left).toMat(sink)(Keep.both).run()
+    p.success(Some(Request(Id.Long(0),"optional",NamedParameters(Map("f" ->
+      Json.fromString("test"))))))
+    whenReady(f) { x =>
+      x should have length 1
+      x shouldBe Seq(
+        Response.Success(Id.Long(0),Json.fromString("test"))
       )
     }
   }

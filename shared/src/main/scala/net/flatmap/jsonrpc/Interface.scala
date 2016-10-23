@@ -56,7 +56,9 @@ class RPCInterfaceMacros(val c: Context) {
       val args = c.freshName[TermName]("args")
 
       val paramsDecodedNamed = paramss.map(_.map {
-        case (pos, xn, n, t) =>
+        case (pos, xn, n, t) => if (t <:< typeOf[Option[Any]])
+          q"$args.get($xn).map(implicitly[io.circe.Decoder[$t]].decodeJson(_).toTry.get).getOrElse(None)"
+        else
           q"implicitly[io.circe.Decoder[$t]].decodeJson($args($xn)).toTry.get"
       })
 
@@ -64,7 +66,10 @@ class RPCInterfaceMacros(val c: Context) {
       val paramsDecodedIndexed = paramss.map(_.map {
         case (pos, xn, n, t) =>
           i += 1
-          q"implicitly[io.circe.Decoder[$t]].decodeJson($args($i)).toTry.get"
+          if (t <:< typeOf[Option[Any]])
+            q"$args.lift($i).map(implicitly[io.circe.Decoder[$t]].decodeJson(_).toTry.get).getOrElse(None)"
+          else
+            q"implicitly[io.circe.Decoder[$t]].decodeJson($args($i)).toTry.get"
       })
 
       if (m.returnType =:= c.typeOf[Unit]) {

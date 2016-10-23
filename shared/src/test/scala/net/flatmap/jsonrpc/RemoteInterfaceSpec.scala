@@ -24,6 +24,8 @@ object ExampleInterfaces {
 
     @JsonRPCNamespace("nested/")
     def nested: Nested
+
+    def optional(f: String, y: Option[Int]): Future[String]
   }
 
   trait Nested {
