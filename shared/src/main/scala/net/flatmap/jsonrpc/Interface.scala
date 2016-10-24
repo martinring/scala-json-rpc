@@ -14,13 +14,20 @@ import scala.reflect.macros.whitebox.Context
 class RPCInterfaceMacros(val c: Context) {
   import c.universe._
 
-  def abstractMethodsOf(t: c.Type) = for {
-    decl <- t.decls if decl.info != null && decl.isMethod && decl.isAbstract
-  } yield decl.asMethod
+  def abstractMethodsOf(t: c.Type) = {
+    val methods = for {
+      decl <- t.decls if decl.info != null && decl.isMethod && decl.isAbstract
+    } yield decl.asMethod
+    methods.groupBy(_.name.toString).foreach { case (name,ms) =>
+      if (ms.size > 1) {
+        ms.foreach(m => c.error(m.pos, "json rpc methods may not be overloaded"))
+        c.abort(c.enclosingPosition, s"json rpc interface may not contain overloaded methods ($name)")
+      }
+    }
+    methods
+  }
 
   def checkValid(m: MethodSymbol) = {
-    if (m.isOverloaded)
-      c.abort(m.pos, "json rpc methods may not be overloaded")
     if (!m.typeParams.isEmpty)
       c.abort(m.pos, "json rpc methods may not use type parameters")
     if (!(m.returnType =:= c.typeOf[Unit] || m.returnType <:< c.typeOf[Future[Any]]))
@@ -160,28 +167,46 @@ class RPCInterfaceMacros(val c: Context) {
     val t = c.weakTypeOf[R]
     val sendNotification = c.freshName[TermName]("sendNotification")
     val sendRequest = c.freshName[TermName]("sendRequest")
+    val close = c.freshName[TermName]("close")
 
     val impls = abstractMethodsOf(t).map(remoteImpls(sendNotification,sendRequest))
 
     q"""net.flatmap.jsonrpc.Remote.buildFlow($ids, {
-          case ($sendRequest,$sendNotification) => new $t { ..$impls }
+          case ($sendRequest,$sendNotification,$close) => new $t with net.flatmap.jsonrpc.RemoteConnection {
+            ..$impls
+            override def close() = $close()
+        }
         })"""
   }
 }
 
 object Local {
-  def buildFlow(f: PartialFunction[RequestMessage, Option[Future[Response]]]) =
-    Flow[RequestMessage].map(f).collect({
+  def buildFlow(f: PartialFunction[RequestMessage, Option[Future[Response]]]) = {
+    val handler = f.orElse[RequestMessage,Option[Future[Response]]] {
+      case Request(id,method,_) => Some(Future.successful(
+        Response.Failure(id,ResponseError(ErrorCodes.MethodNotFound,s"method not found: $method", None))))
+      case Notification(method,_) => Some(Future.successful(
+        Response.Failure(Id.Null,ResponseError(ErrorCodes.MethodNotFound,s"method not found: $method", None))))
+    }
+
+    Flow[RequestMessage].map(handler).collect({
       case Some(json) => json
-    }).flatMapMerge(128,Source.fromFuture)
+    }).flatMapMerge(128, Source.fromFuture)
+  }
 
   def apply[L](impl: L): Flow[RequestMessage, Response,NotUsed] =
     macro RPCInterfaceMacros.localImpl[L]
 }
 
+trait RemoteConnection {
+  def close()
+}
+
 object Remote {
-  def buildFlow[R](ids: Iterator[Id], derive: (Request => Future[Json],
-    Notification => Unit) => R)(implicit ec: ExecutionContext): Flow[Response, RequestMessage,R] = {
+  def buildFlow[R](
+    ids: Iterator[Id],
+    derive: (Request => Future[Json], Notification => Unit, () => Unit) => R)
+                  (implicit ec: ExecutionContext): Flow[Response, RequestMessage,R] = {
     val requests = Source.actorRef[RequestMessage](bufferSize = 1024, OverflowStrategy.fail)
 
     val idProvider = Flow[RequestMessage].scan((ids,Option.empty[RequestMessage]))({
@@ -219,16 +244,15 @@ object Remote {
       .viaMat(reqCycle)(Keep.left)
 
     flow.mapMaterializedValue { case (f,ref) =>
-      f.onComplete(_ => ref ! PoisonPill)
       derive({
         case Request(id,method,params) =>
           val p = Promise[Json]
           ref ! ResolveableRequest(method,params,p)
           p.future
-      }, ref ! _)
+      }, ref ! _, () => ref ! PoisonPill)
     }
   }
 
-  def apply[R](ids: Iterator[Id]): Flow[Response,RequestMessage,R] =
+  def apply[R](ids: Iterator[Id]): Flow[Response,RequestMessage,R with RemoteConnection] =
     macro RPCInterfaceMacros.remoteImpl[R]
 }

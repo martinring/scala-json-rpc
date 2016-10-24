@@ -25,6 +25,8 @@ object ExampleImplementations {
 
     def optional(f: String, y: Option[Int]): Future[String] =
       Future.successful(List.fill(y.getOrElse(1))(f).mkString)
+
+    def additional(x: String): Future[String] = Future.successful(x.reverse)
   }
 }
 
@@ -42,12 +44,13 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
     "methods with return type Future[T]" in {
     val local =
       Local[ExampleInterfaces.Simple](new ExampleImplementations.Simple)
-    val source = Source.maybe[RequestMessage]
+    val source = Source.single[RequestMessage](
+      Request(Id.Long(0),"f",NamedParameters(Map("x" ->
+        Json.fromInt(42))))
+    )
     val sink = Sink.seq[Response]
-    val (p, f) =
-      source.viaMat(local)(Keep.left).toMat(sink)(Keep.both).run()
-    p.success(Some(Request(Id.Long(0),"f",NamedParameters(Map("x" ->
-      Json.fromInt(42))))))
+    val f =
+      source.via(local).toMat(sink)(Keep.right).run()
     whenReady(f) { x =>
       x should have length 1
       x shouldBe Seq(
@@ -61,12 +64,11 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
     val interface = new ExampleImplementations.Simple
     val local =
       Local[ExampleInterfaces.Simple](interface)
-    val source = Source.maybe[RequestMessage]
+    val source = Source.single(Notification("g",NamedParameters(Map("x" ->
+      Json.fromString("42")))))
     val sink = Sink.seq[Response]
-    val (p, f) =
-      source.viaMat(local)(Keep.left).toMat(sink)(Keep.both).run()
-    p.success(Some(Notification("g",NamedParameters(Map("x" ->
-      Json.fromString("42"))))))
+    val f =
+      source.via(local).toMat(sink)(Keep.right).run()
     whenReady(f) { x =>
       x shouldBe empty
       interface.lastCallTog shouldBe "42"
@@ -102,6 +104,23 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
       x shouldBe Seq(
         Response.Success(Id.Long(0),Json.fromInt(42))
       )
+    }
+  }
+
+  it should "not expose methods not part of rpc protocol" in {
+    val local =
+      Local[ExampleInterfaces.Simple](new ExampleImplementations.Simple)
+    val source = Source.single[RequestMessage](
+      Request(Id.Long(0),"additional",NamedParameters(Map("x" ->
+        Json.fromString("param"))))
+    )
+    val sink = Sink.seq[Response]
+    val f =
+      source.via(local).toMat(sink)(Keep.right).run()
+    whenReady(f) { x =>
+      x should have length 1
+      x.head shouldBe a[Response.Failure]
+      x.head.asInstanceOf[Response.Failure].error.code shouldBe ErrorCodes.MethodNotFound
     }
   }
 

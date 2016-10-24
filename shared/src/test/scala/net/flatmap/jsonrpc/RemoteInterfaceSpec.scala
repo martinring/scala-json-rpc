@@ -65,13 +65,13 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
   "a derived remote interface" should "produce request messages for methods " +
     "with return type Future[T]" in {
     val remote = Remote[ExampleInterfaces.Simple](Id.standard)
-    val source = Source.maybe[Response]
+    val source = Source.empty
     val sink = Sink.seq[RequestMessage]
     val ((p,interface), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
     interface.f(42)
     interface.f(17)
-    p.success(None)
+    interface.close()
     whenReady(f) { x =>
       x should have length 2
       x shouldBe Seq(
@@ -84,13 +84,13 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
   it should "produce notification messages for methods " +
     "with return Unit" in {
     val remote = Remote[ExampleInterfaces.Simple](Id.standard)
-    val source = Source.maybe[Response]
+    val source = Source.empty
     val sink = Sink.seq[RequestMessage]
     val ((p,interface), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
     interface.g("foo")
     interface.g("bar")
-    p.success(None)
+    interface.close()
     whenReady(f) { x =>
       x should have length 2
       x shouldBe Seq(
@@ -102,12 +102,12 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
 
   it should "respect custom name annotations" in {
     val remote = Remote[ExampleInterfaces.Simple](Id.standard)
-    val source = Source.maybe[Response]
+    val source = Source.empty
     val sink = Sink.seq[RequestMessage]
     val ((p,interface), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
     interface.h("blubber")
-    p.success(None)
+    interface.close()
     whenReady(f) { x =>
       x should have length 1
       x shouldBe Seq(
@@ -119,12 +119,13 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
 
   it should "implement nested interfaces" in {
     val remote = Remote[ExampleInterfaces.Simple](Id.standard)
-    val source = Source.maybe[Response]
+    val source = Source.empty
     val sink = Sink.seq[RequestMessage]
     val ((p,interface), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
     interface.nested.foo
-    p.success(None)
+    interface.close()
+
     whenReady(f) { x =>
       x should have length 1
       x shouldBe Seq(
@@ -145,6 +146,7 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
 
     // respond to call "y"
     p.success(Some(Response.Success(Id.Long(1),Json.fromString("blub"))))
+    interface.close()
 
     whenReady(y) { r => r shouldEqual "blub" }
   }
@@ -158,6 +160,8 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
     val x = interface.concrete("42") // Id.Long(0)
     // respond to call "x"
     p.success(Some(Response.Success(Id.Long(0),Json.fromString("17"))))
+    interface.close()
+
     whenReady(f) { x =>
       x should have length 1
       x shouldBe Seq(
@@ -181,6 +185,8 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
     p.success(Some(Response.Failure(Id.Long(1), ResponseError(
       17,"fail!",None
     ))))
+
+    interface.close()
 
     whenReady(y.failed) { r =>
       r shouldBe a[ResponseError]
