@@ -170,8 +170,7 @@ class RPCInterfaceMacros(val c: Context) {
 }
 
 object Local {
-  def buildFlow(f: PartialFunction[RequestMessage,
-    Option[Future[Response]]]) =
+  def buildFlow(f: PartialFunction[RequestMessage, Option[Future[Response]]]) =
     Flow[RequestMessage].map(f).collect({
       case Some(json) => json
     }).flatMapMerge(128,Source.fromFuture)

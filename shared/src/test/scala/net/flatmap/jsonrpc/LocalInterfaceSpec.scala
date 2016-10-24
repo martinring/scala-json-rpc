@@ -8,6 +8,7 @@ import net.flatmap.jsonrpc.ExampleInterfaces.Nested
 import org.scalatest._
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.time._
+import scala.concurrent.duration._
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -34,6 +35,8 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
   implicit val dispatcher = system.dispatcher
   implicit override val patienceConfig: PatienceConfig =
     PatienceConfig(Span(500, Milliseconds))
+
+  def run(block: => Unit) = system.scheduler.scheduleOnce(0 millis)(block)
 
   "a derived local interface" should "process request messages for " +
     "methods with return type Future[T]" in {
