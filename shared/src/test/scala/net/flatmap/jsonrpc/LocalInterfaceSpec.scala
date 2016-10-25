@@ -43,14 +43,15 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
   "a derived local interface" should "process request messages for " +
     "methods with return type Future[T]" in {
     val local =
-      Local[ExampleInterfaces.Simple](new ExampleImplementations.Simple)
+      Local[ExampleInterfaces.Simple]
     val source = Source.single[RequestMessage](
       Request(Id.Long(0),"f",NamedParameters(Map("x" ->
         Json.fromInt(42))))
     )
     val sink = Sink.seq[Response]
-    val f =
-      source.via(local).toMat(sink)(Keep.right).run()
+    val (l,f) =
+      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
+    l.success(Some(new ExampleImplementations.Simple))
     whenReady(f) { x =>
       x should have length 1
       x shouldBe Seq(
@@ -61,14 +62,15 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
 
   it should "process notification messages for " +
     "methods with return type Future[T]" in {
-    val interface = new ExampleImplementations.Simple
     val local =
-      Local[ExampleInterfaces.Simple](interface)
+      Local[ExampleInterfaces.Simple]
     val source = Source.single(Notification("g",NamedParameters(Map("x" ->
       Json.fromString("42")))))
     val sink = Sink.seq[Response]
-    val f =
-      source.via(local).toMat(sink)(Keep.right).run()
+    val (l,f) =
+      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
+    val interface = new ExampleImplementations.Simple
+    l.success(Some(interface))
     whenReady(f) { x =>
       x shouldBe empty
       interface.lastCallTog shouldBe "42"
@@ -77,11 +79,12 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
 
   it should "handle positioned parameters" in {
     val local =
-      Local[ExampleInterfaces.Simple](new ExampleImplementations.Simple)
+      Local[ExampleInterfaces.Simple]
     val source = Source.maybe[RequestMessage]
     val sink = Sink.seq[Response]
-    val (p, f) =
-      source.viaMat(local)(Keep.left).toMat(sink)(Keep.both).run()
+    val ((p,l), f) =
+      source.viaMat(local)(Keep.both).toMat(sink)(Keep.both).run()
+    l.success(Some(new ExampleImplementations.Simple))
     p.success(Some(Request(Id.Long(0),"f",PositionedParameters(Array(Json.fromInt(42))))))
     whenReady(f) { x =>
       x should have length 1
@@ -93,11 +96,12 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
 
   it should "handle nested namespaces" in {
     val local =
-      Local[ExampleInterfaces.Simple](new ExampleImplementations.Simple)
+      Local[ExampleInterfaces.Simple]
     val source = Source.maybe[RequestMessage]
     val sink = Sink.seq[Response]
-    val (p, f) =
-      source.viaMat(local)(Keep.left).toMat(sink)(Keep.both).run()
+    val ((p,l), f) =
+      source.viaMat(local)(Keep.both).toMat(sink)(Keep.both).run()
+    l.success(Some(new ExampleImplementations.Simple))
     p.success(Some(Request(Id.Long(0),"nested/foo",NoParameters)))
     whenReady(f) { x =>
       x should have length 1
@@ -109,14 +113,15 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
 
   it should "not expose methods not part of rpc protocol" in {
     val local =
-      Local[ExampleInterfaces.Simple](new ExampleImplementations.Simple)
+      Local[ExampleInterfaces.Simple]
     val source = Source.single[RequestMessage](
       Request(Id.Long(0),"additional",NamedParameters(Map("x" ->
         Json.fromString("param"))))
     )
     val sink = Sink.seq[Response]
-    val f =
-      source.via(local).toMat(sink)(Keep.right).run()
+    val (l,f) =
+      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
+    l.success(Some(new ExampleImplementations.Simple))
     whenReady(f) { x =>
       x should have length 1
       x.head shouldBe a[Response.Failure]
@@ -126,11 +131,12 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
 
   it should "handle omitted optional parameters" in {
     val local =
-      Local[ExampleInterfaces.Simple](new ExampleImplementations.Simple)
+      Local[ExampleInterfaces.Simple]
     val source = Source.maybe[RequestMessage]
     val sink = Sink.seq[Response]
-    val (p, f) =
-      source.viaMat(local)(Keep.left).toMat(sink)(Keep.both).run()
+    val ((p,l), f) =
+      source.viaMat(local)(Keep.both).toMat(sink)(Keep.both).run()
+    l.success(Some(new ExampleImplementations.Simple))
     p.success(Some(Request(Id.Long(0),"optional",NamedParameters(Map("f" ->
       Json.fromString("test"))))))
     whenReady(f) { x =>

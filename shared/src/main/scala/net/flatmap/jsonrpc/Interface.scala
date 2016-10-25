@@ -9,7 +9,7 @@ import io.circe._
 import scala.collection.GenTraversableOnce
 import scala.concurrent._
 import scala.language.experimental.macros
-import scala.reflect.macros.whitebox.Context
+import scala.reflect.macros.blackbox.Context
 
 class RPCInterfaceMacros(val c: Context) {
   import c.universe._
@@ -25,6 +25,20 @@ class RPCInterfaceMacros(val c: Context) {
       }
     }
     methods
+  }
+
+  def inferEncoder(t: Type) = {
+    val etype = appliedType(typeOf[Encoder[_]].typeConstructor, t)
+    val encoder = c.inferImplicitValue(etype)
+    if (encoder.isEmpty) c.abort(c.enclosingPosition, s"Could not find implicit io.circe.Encoder[$t]")
+    encoder
+  }
+
+  def inferDecoder(t: Type) = {
+    val etype = appliedType(typeOf[Decoder[_]].typeConstructor, t)
+    val decoder = c.inferImplicitValue(etype)
+    if (decoder.isEmpty) c.abort(c.enclosingPosition, s"Could not find implicit io.circe.Decoder[$t]")
+    decoder
   }
 
   def checkValid(m: MethodSymbol) = {
@@ -64,8 +78,7 @@ class RPCInterfaceMacros(val c: Context) {
 
       val paramsDecodedNamed = paramss.map(_.map {
         case (pos, xn, n, t) =>
-          val dtype = appliedType(typeOf[Decoder[_]].typeConstructor, t)
-          val decoder = c.inferImplicitValue(dtype, silent = false)
+          val decoder = inferDecoder(t)
           if (t <:< typeOf[Option[Any]])
             q"$args.get($xn).map($decoder.decodeJson(_).toTry.get).getOrElse(None)"
           else
@@ -76,8 +89,7 @@ class RPCInterfaceMacros(val c: Context) {
       val paramsDecodedIndexed = paramss.map(_.map {
         case (pos, xn, n, t) =>
           i += 1
-          val dtype = appliedType(typeOf[Decoder[_]].typeConstructor,t)
-          val decoder = c.inferImplicitValue(dtype,silent = false)
+          val decoder = inferDecoder(t)
           if (t <:< typeOf[Option[Any]])
             q"$args.lift($i).map($decoder.decodeJson(_).toTry.get).getOrElse(None)"
           else
@@ -94,16 +106,15 @@ class RPCInterfaceMacros(val c: Context) {
       } else {
         val id = c.freshName[TermName]("id")
         val rt = m.returnType.typeArgs.head
-        val etype = appliedType(typeOf[Encoder[_]].typeConstructor, rt)
-        val encoder = c.inferImplicitValue(etype, silent = false)
+        val encoder = inferEncoder(rt)
         if (argMatch.isEmpty) {
           val res = q"Some($select.${m.name}(...$paramsDecodedNamed).map((x) => net.flatmap.jsonrpc.Response.Success($id,$encoder(x))))"
           Seq(cq"net.flatmap.jsonrpc.Request($id, $name,net.flatmap.jsonrpc.NoParameters) => $res")
         } else Seq({
-          val res = q"Some($select.${m.name}(...$paramsDecodedNamed).map((x) => net.flatmap.jsonrpc.Response.Success($id,implicitly[io.circe.Encoder[$rt]].apply(x))))"
+          val res = q"Some($select.${m.name}(...$paramsDecodedNamed).map((x) => net.flatmap.jsonrpc.Response.Success($id,$encoder(x))))"
           cq"net.flatmap.jsonrpc.Request($id, $name, net.flatmap.jsonrpc.NamedParameters($args)) => $res"
         },{
-          val res = q"Some($select.${m.name}(...$paramsDecodedIndexed).map((x) => net.flatmap.jsonrpc.Response.Success($id,implicitly[io.circe.Encoder[$rt]].apply(x))))"
+          val res = q"Some($select.${m.name}(...$paramsDecodedIndexed).map((x) => net.flatmap.jsonrpc.Response.Success($id,$encoder(x))))"
           cq"net.flatmap.jsonrpc.Request($id, $name, net.flatmap.jsonrpc.PositionedParameters($args)) => $res"
         })
       }
@@ -112,13 +123,15 @@ class RPCInterfaceMacros(val c: Context) {
       abstractMethodsOf(t).flatMap(localCases(q"$select.${m.name}",prefix + namespace)).toSeq
     }
 
-  def localImpl[L: c.WeakTypeTag](impl: c.Expr[L]) = {
+  def localImpl[L: c.WeakTypeTag] = {
     import c.universe._
     val t = c.weakTypeOf[L]
 
+    val impl = c.freshName[TermName]("impl")
+
     val cases = abstractMethodsOf(t).flatMap(localCases(q"$impl"))
 
-    q"""net.flatmap.jsonrpc.Local.buildFlow({
+    q"""net.flatmap.jsonrpc.Local.buildFlow(($impl: $t) => {
           case ..$cases
         })"""
   }
@@ -139,7 +152,8 @@ class RPCInterfaceMacros(val c: Context) {
       val args = paramss.flatten.map {
         case (pos, n, t) =>
           val s = n.toString
-          q"$s -> implicitly[io.circe.Encoder[$t]].apply($n)"
+          val encoder = inferEncoder(t)
+          q"$s -> $encoder($n)"
       }
 
       val params =
@@ -151,8 +165,9 @@ class RPCInterfaceMacros(val c: Context) {
         q"$sendNotification($msg)"
       } else {
         val t = m.returnType.typeArgs.head
+        val decoder = inferDecoder(t)
         val msg = q"net.flatmap.jsonrpc.Request(net.flatmap.jsonrpc.Id.Null, $name, $params)"
-        q"$sendRequest($msg).map(implicitly[io.circe.Decoder[$t]].decodeJson).map(_.toTry.get)"
+        q"$sendRequest($msg).map($decoder.decodeJson).map(_.toTry.get)"
       }
 
       val returnType = m.returnType
@@ -188,20 +203,23 @@ class RPCInterfaceMacros(val c: Context) {
 }
 
 object Local {
-  def buildFlow(f: PartialFunction[RequestMessage, Option[Future[Response]]]) = {
-    val handler = f.orElse[RequestMessage,Option[Future[Response]]] {
+  def buildFlow[L](f: L => PartialFunction[RequestMessage, Option[Future[Response]]]) = {
+    def handler(l: L) = f(l).orElse[RequestMessage,Option[Future[Response]]] {
       case Request(id,method,_) => Some(Future.successful(
         Response.Failure(id,ResponseError(ErrorCodes.MethodNotFound,s"method not found: $method", None))))
       case Notification(method,_) => Some(Future.successful(
         Response.Failure(Id.Null,ResponseError(ErrorCodes.MethodNotFound,s"method not found: $method", None))))
     }
 
-    Flow[RequestMessage].map(handler).collect({
+
+
+    val src = Source.maybe[L].flatMapConcat(l => Source.repeat(handler(l)))
+    Flow[RequestMessage].zipWithMat(src)((msg,f) => f(msg))(Keep.right).collect {
       case Some(json) => json
-    }).flatMapMerge(128, Source.fromFuture)
+    }.flatMapConcat(Source.fromFuture)
   }
 
-  def apply[L](impl: L): Flow[RequestMessage, Response,NotUsed] =
+  def apply[L]: Flow[RequestMessage, Response, Promise[Option[L]]] =
     macro RPCInterfaceMacros.localImpl[L]
 }
 
