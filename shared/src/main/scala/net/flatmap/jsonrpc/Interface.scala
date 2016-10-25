@@ -37,7 +37,7 @@ class RPCInterfaceMacros(val c: Context) {
   def rpcNameOf(m: MethodSymbol) =
     m.annotations.map(_.tree).collectFirst {
       case tree@Apply(annon,List(Literal(Constant(name: String))))
-        if tree.tpe =:= c.typeOf[JsonRPC] => name
+        if tree.tpe =:= c.typeOf[JsonRPCMethod] => name
     } getOrElse m.name.toString
 
   def rpcNamespaceOf(m: MethodSymbol) =
@@ -63,20 +63,25 @@ class RPCInterfaceMacros(val c: Context) {
       val args = c.freshName[TermName]("args")
 
       val paramsDecodedNamed = paramss.map(_.map {
-        case (pos, xn, n, t) => if (t <:< typeOf[Option[Any]])
-          q"$args.get($xn).map(implicitly[io.circe.Decoder[$t]].decodeJson(_).toTry.get).getOrElse(None)"
-        else
-          q"implicitly[io.circe.Decoder[$t]].decodeJson($args($xn)).toTry.get"
+        case (pos, xn, n, t) =>
+          val dtype = appliedType(typeOf[Decoder[_]].typeConstructor, t)
+          val decoder = c.inferImplicitValue(dtype, silent = false)
+          if (t <:< typeOf[Option[Any]])
+            q"$args.get($xn).map($decoder.decodeJson(_).toTry.get).getOrElse(None)"
+          else
+            q"$decoder.decodeJson($args($xn)).toTry.get"
       })
 
       var i = -1
       val paramsDecodedIndexed = paramss.map(_.map {
         case (pos, xn, n, t) =>
           i += 1
+          val dtype = appliedType(typeOf[Decoder[_]].typeConstructor,t)
+          val decoder = c.inferImplicitValue(dtype,silent = false)
           if (t <:< typeOf[Option[Any]])
-            q"$args.lift($i).map(implicitly[io.circe.Decoder[$t]].decodeJson(_).toTry.get).getOrElse(None)"
+            q"$args.lift($i).map($decoder.decodeJson(_).toTry.get).getOrElse(None)"
           else
-            q"implicitly[io.circe.Decoder[$t]].decodeJson($args($i)).toTry.get"
+            q"$decoder.decodeJson($args($i)).toTry.get"
       })
 
       if (m.returnType =:= c.typeOf[Unit]) {
@@ -89,8 +94,10 @@ class RPCInterfaceMacros(val c: Context) {
       } else {
         val id = c.freshName[TermName]("id")
         val rt = m.returnType.typeArgs.head
+        val etype = appliedType(typeOf[Encoder[_]].typeConstructor, rt)
+        val encoder = c.inferImplicitValue(etype, silent = false)
         if (argMatch.isEmpty) {
-          val res = q"Some($select.${m.name}(...$paramsDecodedNamed).map((x) => net.flatmap.jsonrpc.Response.Success($id,implicitly[io.circe.Encoder[$rt]].apply(x))))"
+          val res = q"Some($select.${m.name}(...$paramsDecodedNamed).map((x) => net.flatmap.jsonrpc.Response.Success($id,$encoder(x))))"
           Seq(cq"net.flatmap.jsonrpc.Request($id, $name,net.flatmap.jsonrpc.NoParameters) => $res")
         } else Seq({
           val res = q"Some($select.${m.name}(...$paramsDecodedNamed).map((x) => net.flatmap.jsonrpc.Response.Success($id,implicitly[io.circe.Encoder[$rt]].apply(x))))"

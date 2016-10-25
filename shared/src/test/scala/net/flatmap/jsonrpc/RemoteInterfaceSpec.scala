@@ -16,7 +16,7 @@ object ExampleInterfaces {
     def f(x: Int): Future[String]
     def g(x: String)
 
-    @JsonRPC("blub") def h(x: String)
+    @JsonRPCMethod("blub") def h(x: String)
 
     def concrete(x: String)
                 (implicit ec: ExecutionContext) =
