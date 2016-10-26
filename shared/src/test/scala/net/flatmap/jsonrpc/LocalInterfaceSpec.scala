@@ -4,12 +4,12 @@ import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl._
 import io.circe.Json
-import net.flatmap.jsonrpc.ExampleInterfaces.Nested
+import net.flatmap.jsonrpc.ExampleInterfaces.{Nested, Other}
 import org.scalatest._
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.time._
-import scala.concurrent.duration._
 
+import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 
 object ExampleImplementations {
@@ -70,6 +70,27 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
       x should have length 1
       x shouldBe Seq(
         Response.Success(Id.Long(0),Json.fromString("42"))
+      )
+    }
+  }
+
+  it should "respect methods from mixed-in traits" in {
+    val local =
+      Local[ExampleInterfaces.Simple with ExampleInterfaces.Other]
+    val source = Source.single(Request(Id.Long(0),"other/hallo",NoParameters))
+    val sink = Sink.seq[Response]
+    val (l,f) =
+      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
+    class Blub extends ExampleImplementations.Simple with Other {
+      @JsonRPCMethod("other/hallo")
+      def hallo(): Future[String] = Future.successful("yay!")
+    }
+    val interface = new Blub
+    l.success(Some(interface))
+    whenReady(f) { x =>
+      x should have length 1
+      x shouldBe Seq(
+        Response.Success(Id.Long(0),Json.fromString("yay!"))
       )
     }
   }

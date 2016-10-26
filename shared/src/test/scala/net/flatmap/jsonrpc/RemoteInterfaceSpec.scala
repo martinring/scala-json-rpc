@@ -28,6 +28,11 @@ object ExampleInterfaces {
     def optional(f: String, y: Option[Int]): Future[String]
   }
 
+  trait Other {
+    @JsonRPCMethod("other/hallo")
+    def hallo(): Future[String]
+  }
+
   trait Nested {
     def foo: Future[Int]
   }

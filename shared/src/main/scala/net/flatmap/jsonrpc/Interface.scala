@@ -19,7 +19,7 @@ class RPCInterfaceMacros(val c: Context) {
 
   def abstractMethodsOf(t: c.Type) = {
     val methods = for {
-      decl <- t.decls if decl.info != null && decl.isMethod && decl.isAbstract
+      decl <- t.members if decl.info != null && decl.isMethod && decl.isAbstract
     } yield decl.asMethod
     methods.groupBy(_.name.toString).foreach { case (name,ms) =>
       if (ms.size > 1) {
