@@ -5,11 +5,14 @@ import akka.actor._
 import akka.stream._
 import akka.stream.scaladsl._
 import io.circe._
+import sun.reflect.generics.reflectiveObjects.NotImplementedException
 
 import scala.collection.GenTraversableOnce
 import scala.concurrent._
 import scala.language.experimental.macros
 import scala.reflect.macros.blackbox.Context
+import scala.util.Try
+import scala.util.control.NonFatal
 
 class RPCInterfaceMacros(val c: Context) {
   import c.universe._
@@ -211,9 +214,27 @@ object Local {
         Response.Failure(Id.Null,ResponseError(ErrorCodes.MethodNotFound,s"method not found: $method", None))))
     }
 
+    def recovery(handler: RequestMessage => Option[Future[Response]]): RequestMessage => Option[Future[Response]] = {
+      case r: RequestMessage =>
+        val id = r match {
+          case Request(id,_,_) => id
+          case _ => Id.Null
+        }
+        Try(handler(r)).recover {
+          case r: ResponseError => Some(Future.successful(Response.Failure(id,r)))
+          case e: NotImplementedException => Some(Future.successful(
+            Response.Failure(id,ResponseError(ErrorCodes.MethodNotFound,s"method not implemented: ${r.method}"))))
+          case _: NotImplementedError => Some(Future.successful(
+            Response.Failure(id,ResponseError(ErrorCodes.MethodNotFound,s"method not implemented: ${r.method}"))))
+          case n: NoSuchElementException => Some(Future.successful(
+            Response.Failure(id,ResponseError(ErrorCodes.InvalidParams,s"invalid parameters: ${n.getMessage}"))))
+          case NonFatal(e) => Some(Future.successful(
+            Response.Failure(id,ResponseError(ErrorCodes.serverErrorStart,s"server error: $e", None))
+          ))
+        }.get
+    }
 
-
-    val src = Source.maybe[L].flatMapConcat(l => Source.repeat(handler(l)))
+    val src = Source.maybe[L].flatMapConcat(l => Source.repeat(recovery(handler(l))))
     Flow[RequestMessage].zipWithMat(src)((msg,f) => f(msg))(Keep.right).collect {
       case Some(json) => json
     }.flatMapConcat(Source.fromFuture)

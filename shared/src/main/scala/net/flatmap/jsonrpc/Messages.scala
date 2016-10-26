@@ -124,7 +124,7 @@ object Response {
 case class ResponseError(
   val code: Int,
   val message: String,
-  val data: Option[Json]
+  val data: Option[Json] = None
 ) extends Throwable {
   override def getMessage: String = message
 }

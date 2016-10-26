@@ -2,7 +2,7 @@ package net.flatmap.jsonrpc
 
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.Flow
+import akka.stream.scaladsl.{Flow, Keep}
 import akka.util.ByteString
 import net.flatmap.jsonrpc.ExampleInterfaces.Nested
 import org.scalatest.{FlatSpec, Matchers}
@@ -37,14 +37,17 @@ class ConnectionSpec extends FlatSpec with Matchers with ScalaFutures {
   "a connection" should "be short-circuitable" in {
     val local = Local[ExampleInterfaces.Simple]
     val remote = Remote[ExampleInterfaces.Simple](Id.standard)
-    val connection =
-      Connection.bidi(local,remote,(l: ExampleInterfaces.Simple) => new SimpleDependentImpl(l))
-                .join(Flow[ByteString]).run()
+
+    val flow = Connection.bidi(local,remote,(l: ExampleInterfaces.Simple) => new SimpleDependentImpl(l))
+
+    val connection = flow.join(flow).run()
+
     whenReady(connection.remote.nested.foo) { ft =>
       ft shouldBe 32
     }
-    connection.local.g("test")
-    whenReady(connection.remote.f(0)) { v =>
+    connection.remote.g("test")
+    Thread.sleep(100)
+    whenReady(connection.local.f(0)) { v =>
       v shouldBe "from g: test"
     }
     connection.close()

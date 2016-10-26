@@ -21,12 +21,26 @@ object ExampleImplementations {
     def nested = new Nested {
       override def foo(): Future[Int] = Future.successful(42)
     }
-    override def h(x: String): Unit = ()
+    override def h(x: String): Unit = ???
 
     def optional(f: String, y: Option[Int]): Future[String] =
       Future.successful(List.fill(y.getOrElse(1))(f).mkString)
 
     def additional(x: String): Future[String] = Future.successful(x.reverse)
+  }
+
+  class Unimplemented extends ExampleInterfaces.Simple {
+    def f(x: Int): Future[String] = ???
+
+    def g(x: String): Unit = ???
+
+    @JsonRPCMethod("blub")
+    def h(x: String): Unit = ???
+
+    @JsonRPCNamespace("nested/")
+    def nested: Nested = ???
+
+    def optional(f: String, y: Option[Int]): Future[String] = ???
   }
 }
 
@@ -144,6 +158,42 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
       x shouldBe Seq(
         Response.Success(Id.Long(0),Json.fromString("test"))
       )
+    }
+  }
+
+  it should "return failure responses for missing implementations" in {
+    val local =
+      Local[ExampleInterfaces.Simple]
+    val source = Source.single[RequestMessage](
+      Request(Id.Long(0),"f",NamedParameters(Map("x" ->
+        Json.fromInt(4))))
+    )
+    val sink = Sink.seq[Response]
+    val (l,f) =
+      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
+    l.success(Some(new ExampleImplementations.Unimplemented))
+    whenReady(f) { x =>
+      x should have length 1
+      x.head shouldBe a[Response.Failure]
+      x.head.asInstanceOf[Response.Failure].error.code shouldBe ErrorCodes.MethodNotFound
+    }
+  }
+
+  it should "return failure responses for missing parameters" in {
+    val local =
+      Local[ExampleInterfaces.Simple]
+    val source = Source.single[RequestMessage](
+      Request(Id.Long(0),"f",NamedParameters(Map("y" ->
+        Json.fromInt(4))))
+    )
+    val sink = Sink.seq[Response]
+    val (l,f) =
+      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
+    l.success(Some(new ExampleImplementations.Unimplemented))
+    whenReady(f) { x =>
+      x should have length 1
+      x.head shouldBe a[Response.Failure]
+      x.head.asInstanceOf[Response.Failure].error.code shouldBe ErrorCodes.InvalidParams
     }
   }
 
