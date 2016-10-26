@@ -87,10 +87,10 @@ class Macros(val c: blackbox.Context) {
         c.abort(member.pos, "Json RPC Interfaces may not contain abstract" +
           "members other than methods")
       val method = member.asMethod
-      val namespace = getAnnotationWithStringLiteral[JsonRPCNamespace](method)
-      val customName = getAnnotationWithStringLiteral[JsonRPCMethod](method)
+      val namespace = getAnnotationWithStringLiteral[JsonRPC.Namespace](method)
+      val customName = getAnnotationWithStringLiteral[JsonRPC.Named](method)
       if (namespace.isDefined && customName.isDefined)
-        c.abort(method.pos, "Annotations JsonRPCNamespace and JsonRPCMethod " +
+        c.abort(method.pos, "Annotations JsonRPC.Namespace and JsonRPC.Named " +
           "may not be present at the same time")
       else namespace.fold {
         val name = customName getOrElse method.name.toString
@@ -154,12 +154,4 @@ class Macros(val c: blackbox.Context) {
   def deriveRemote[R: WeakTypeTag](idProvider: c.Expr[Iterable[Id]]) = {
     q""
   }
-}
-
-object JsonRPC {
-  def local[L]: Flow[RequestMessage,Response,Promise[L]] =
-    macro Macros.deriveLocal[L]
-
-  def remote[R](idProvider: Iterable[Id]): Flow[Response,RequestMessage,R] =
-    macro Macros.deriveRemote[R]
 }

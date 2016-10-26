@@ -13,15 +13,14 @@ import scala.concurrent.Future
 
 class SimpleDependentImpl(remote: ExampleInterfaces.Simple) extends ExampleInterfaces.Simple {
   def f(x: Int): Future[String] = Future.successful(hvalue)
-  def g(x: String): Unit = remote.h("from g: " + x)
-  @JsonRPCMethod("blub")
   var hvalue = ""
+  def g(x: String): Unit = remote.h("from g: " + x)
   def h(x: String): Unit = { hvalue = x }
-  @JsonRPCNamespace("nested/")
   def nested: Nested = new Nested {
     def foo: Future[Int] = Future.successful(32)
   }
   def optional(f: String, y: Option[Int]): Future[String] = Future.successful(f)
+  def spreaded(p: ExampleParam): Future[String] = ???
 }
 
 /**

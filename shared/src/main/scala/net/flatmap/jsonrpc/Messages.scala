@@ -34,13 +34,20 @@ sealed trait Message {
   val jsonrpc = "2.0"
 }
 
-sealed trait ParameterList
-case object NoParameters extends ParameterList
+sealed trait ParameterList {
+  def json: Json
+}
+case object NoParameters extends ParameterList {
+  def json = Json.obj()
+}
 case class PositionedParameters(val params: IndexedSeq[Json]) extends ParameterList {
   require(params.nonEmpty)
+  def json = sys.error("Positioned Parameters cannot be interpreted as JSON Object")
 }
 case class NamedParameters(val params: Map[String,Json]) extends ParameterList {
   require(params.nonEmpty)
+  def json = Json.obj(params.toSeq :_*)
+
 }
 
 sealed trait RequestMessage extends Message {

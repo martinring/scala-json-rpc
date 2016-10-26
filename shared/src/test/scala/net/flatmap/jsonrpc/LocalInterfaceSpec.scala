@@ -27,20 +27,18 @@ object ExampleImplementations {
       Future.successful(List.fill(y.getOrElse(1))(f).mkString)
 
     def additional(x: String): Future[String] = Future.successful(x.reverse)
+    def spreaded(p: ExampleParam): Future[String] = Future.successful(
+      p.a + p.b + p.c
+    )
   }
 
   class Unimplemented extends ExampleInterfaces.Simple {
     def f(x: Int): Future[String] = ???
-
     def g(x: String): Unit = ???
-
-    @JsonRPCMethod("blub")
     def h(x: String): Unit = ???
-
-    @JsonRPCNamespace("nested/")
     def nested: Nested = ???
-
     def optional(f: String, y: Option[Int]): Future[String] = ???
+    def spreaded(p: ExampleParam): Future[String] = ???
   }
 }
 
@@ -82,7 +80,6 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
     val (l,f) =
       source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
     class Blub extends ExampleImplementations.Simple with Other {
-      @JsonRPCMethod("other/hallo")
       def hallo(): Future[String] = Future.successful("yay!")
     }
     val interface = new Blub
@@ -91,6 +88,25 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
       x should have length 1
       x shouldBe Seq(
         Response.Success(Id.Long(0),Json.fromString("yay!"))
+      )
+    }
+  }
+
+  it should "respect spread param annotations" in {
+    val local =
+      Local[ExampleInterfaces.Simple]
+    val param = ExampleParam(1,"2",true)
+    val paramEnc = ExampleParam.encoder(param)
+    val source = Source.single(Request(Id.Long(0),"spreaded",NamedParameters(paramEnc.asObject.get.toMap)))
+    val sink = Sink.seq[Response]
+    val (l,f) =
+      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
+    val interface = new ExampleImplementations.Simple
+    l.success(Some(interface))
+    whenReady(f) { x =>
+      x should have length 1
+      x shouldBe Seq(
+        Response.Success(Id.Long(0),Json.fromString(param.a + param.b + param.c))
       )
     }
   }

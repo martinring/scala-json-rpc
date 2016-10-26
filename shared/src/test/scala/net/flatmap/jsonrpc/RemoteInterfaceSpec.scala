@@ -11,25 +11,35 @@ import org.scalatest.time._
 
 import scala.concurrent.{ExecutionContext, Future}
 
+case class ExampleParam(a: Int, b: String, c: Boolean)
+object ExampleParam {
+  import io.circe.generic.semiauto._
+  implicit val encoder = deriveEncoder[ExampleParam]
+  implicit val decoder = deriveDecoder[ExampleParam]
+}
+
 object ExampleInterfaces {
   trait Simple {
     def f(x: Int): Future[String]
     def g(x: String)
 
-    @JsonRPCMethod("blub") def h(x: String)
+    @JsonRPC.Named("blub") def h(x: String)
 
     def concrete(x: String)
                 (implicit ec: ExecutionContext) =
       f(x.toInt).map(_.toInt)
 
-    @JsonRPCNamespace("nested/")
+    @JsonRPC.Namespace("nested/")
     def nested: Nested
 
     def optional(f: String, y: Option[Int]): Future[String]
+
+    @JsonRPC.SpreadParam
+    def spreaded(p: ExampleParam): Future[String]
   }
 
   trait Other {
-    @JsonRPCMethod("other/hallo")
+    @JsonRPC.Named("other/hallo")
     def hallo(): Future[String]
   }
 
@@ -118,6 +128,23 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
       x shouldBe Seq(
         Notification("blub",NamedParameters(Map("x" -> Json.fromString
         ("blubber"))))
+      )
+    }
+  }
+
+  it should "respect spread param annotations" in {
+    val remote = Remote[ExampleInterfaces.Simple](Id.standard)
+    val source = Source.empty
+    val sink = Sink.seq[RequestMessage]
+    val ((p,interface), f) =
+      source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
+    val param = ExampleParam(1,"2",false)
+    interface.spreaded(param)
+    interface.close()
+    whenReady(f) { x =>
+      x should have length 1
+      x shouldBe Seq(
+        Request(Id.Long(0),"spreaded",NamedParameters(ExampleParam.encoder(param).asObject.get.toMap))
       )
     }
   }
