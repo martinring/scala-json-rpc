@@ -16,10 +16,10 @@ Add the following to your sbt build definition
 resolvers += Resolver.bintrayRepo("flatmap", "maven")
 
 // For scala.js projects
-libraryDependencies += "net.flatmap" %%% "jsonrpc" % "0.3.1"
+libraryDependencies += "net.flatmap" %%% "jsonrpc" % "0.4.0"
 
 // For ordinary Scala projects
-libraryDependencies += "net.flatmap" %% "jsonrpc" % "0.3.1"
+libraryDependencies += "net.flatmap" %% "jsonrpc" % "0.4.0"
 ```
 
 ### Defining a Protocol
@@ -30,6 +30,16 @@ Define your server and client interfaces as Scala traits:
 trait ExampleServer {
   // all jsonrpc methods must either return `Unit` or `Future[T]`
   def sayHello(s: String): Future[String]
+  
+  // Custom Names
+  @JsonRPC.Named("class")
+  def clazz(i: Int): Unit
+  
+  // Sub-Protocols
+  // Type 'Other' will be treated as protocol with
+  // "other/" prefix on all methods
+  @JsonRPC.Namespace("other/")
+  def foo: Other    
 }
 ```
 
@@ -44,89 +54,44 @@ trait ExampleClient {
 Implement the client:
 
 ```scala
-object ExampleClientImpl {
-  def foo: Future[Int] = Future.successful(42)
+class ExampleClientImpl(server: ExampleServer) {
+  def foo: Future[Int] = 
+    server.sayHello("world").map(_.length)  
 }
 ```
 
 Derive message-flow representations of the server and the client:
 
 ```scala
-val local: Flow[RequestMessage,Response,NotUsed]  =
-  Local[ExampleClient](ExampleClientImpl)
+val local: Flow[RequestMessage,Response,Promise[Option[ExampleClient]]]  =
+  Local[ExampleClient]
 
 val remote: Flow[Response,RequestMessage,ExampleServer] =
-  Remote[ExampleServer](Id.standard)
+  Remote[ExampleServer](Id.standard) // Use standard message Ids
 ```
 
 ### Opening a connection
 
-Initialize and open your connection
+Prepare your connection
 
 ```scala
-val connection: Flow[ByteString,ByteString,ExampleServer] =
-  Connection.create(local,remote)
-
-val server: ExampleServer = Connection.open(
-  // Read from stdin
-  in  = StreamConverters.fromInputStream(() => System.in),
-  // Write to stdout
-  out = StreamConverters.fromOutputStream(() => System.out),
-  connection = connection)
+val connectionFlow: Flow[ByteString,ByteString,Connection[ExampleClient,ExampleServer]] =
+  Connection.bidi(local,remote,(srv: ExampleServer) => new ExampleClientImpl(srv))
 ```
 
 Use it:
 
 ```scala
-val f = server.sayHello("bar")
-```
-
-will create the following request: (and listen for response on id 0)
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 0,
-  "method": "sayHello",
-  "params": {
-    "s": "bar"
-  }
-}
+val in: Source[ByteString,Any] =  ... // input stream
+val out: Sink[ByteString,Any] =   ... // output stream 
+val connection = in.viaMat(connectionFlow)(Keep.right).to(out).run()
 ```
 
 ## Using with HTTP or WebSockets
 
-To use websockets or http use `Connection.create(local,remote,framing = Framing.none)` and connect flow to websockets or http requests via `Connection.open`
+To use websockets or http use `Connection.bidi(...,framing = Framing.none)` and connect flow to websockets or http requests via `Connection.open`
 
-## Advanced Features
-
-### Custom Names
-
-To customize names, use `@JsonRPC` annotation:
-
-```scala
-@JsonRPC("class")
-def clazz: Future[Something]
-```
-
-### Namespaces (Sub-protocols)
-
-Sometimes it is desirable to nest some namespaces into the base protocol. This can
-be achieved with sub-protocols:
-
-```scala
-trait MyProtocol {
-  @JsonRPCNamespace(prefix = "arbitrary/")
-  def arbitrary: MySubProtocol
-}
-
-trait MySubProtocol {
-  def subtract(a: Int, b: Int): Future[Int]
-}
-```
-
-Calls to MyProtocol.arbitrary.subtract will result in calls of method `"arbitrary/subtract"`
 
 ### License
 
-MIT
+[MIT](https://opensource.org/licenses/MIT)
