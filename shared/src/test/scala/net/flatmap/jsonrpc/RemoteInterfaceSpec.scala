@@ -4,7 +4,6 @@ import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl._
 import io.circe.Json
-import net.flatmap.jsonrpc.ExampleInterfaces.OverloadError
 import org.scalatest._
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.time._
@@ -12,49 +11,23 @@ import org.scalatest.time._
 import scala.concurrent.{ExecutionContext, Future}
 
 case class ExampleParam(a: Int, b: String, c: Boolean)
+
 object ExampleParam {
   import io.circe.generic.semiauto._
   implicit val encoder = deriveEncoder[ExampleParam]
   implicit val decoder = deriveDecoder[ExampleParam]
 }
 
-object ExampleInterfaces {
-  trait Simple {
-    def f(x: Int): Future[String]
-    def g(x: String)
+case class ExampleError(message: String)
 
-    @JsonRPC.Named("blub") def h(x: String)
+object ExampleError {
+  import io.circe.generic.semiauto._
+  implicit val encoder = deriveEncoder[ExampleError]
+  implicit val decoder = deriveDecoder[ExampleError]
+}
 
-    def concrete(x: String)
-                (implicit ec: ExecutionContext) =
-      f(x.toInt).map(_.toInt)
-
-    @JsonRPC.Namespace("nested/")
-    def nested: Nested
-
-    def optional(f: String, y: Option[Int]): Future[String]
-
-    @JsonRPC.SpreadParam
-    def spreaded(p: ExampleParam): Future[String]
-  }
-
-  trait Other {
-    @JsonRPC.Named("other/hallo")
-    def hallo(): Future[String]
-  }
-
-  trait Nested {
-    def foo: Future[Int]
-  }
-
-  trait OverloadError {
-    def f(x: Int): Future[String]
-    def f(x: String): Future[String]
-  }
-
-  trait GenericsError {
-    def f[T](x: T): Future[String]
-  }
+object SimpleInterface extends Interface {
+  val f = RequestType[Int,String,ExampleError]("call/something")
 }
 
 
@@ -65,37 +38,28 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
   implicit override val patienceConfig: PatienceConfig =
     PatienceConfig(Span(500, Milliseconds))
 
-  "automatic derivation" should "fail, when an overloaded method is present" in {
-    "Remote[ExampleInterfaces.OverloadError](Id.standard)" shouldNot compile
-  }
-
-  it should "fail, when a method is polymorphic" in {
-    "Remote[ExampleInterfaces.GenericsError](Id.standard)" shouldNot typeCheck
-  }
-
-  it should "succeed if none of the above applies" in {
-    "Remote[ExampleInterfaces.Simple](Id.standard)" should compile
-  }
 
   "a derived remote interface" should "produce request messages for methods " +
     "with return type Future[T]" in {
-    val remote = Remote[ExampleInterfaces.Simple](Id.standard)
+    val remote = Remote(SimpleInterface,Id.standard)
     val source = Source.empty
     val sink = Sink.seq[RequestMessage]
-    val ((p,interface), f) =
+    val ((p,r), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
-    interface.f(42)
-    interface.f(17)
-    interface.close()
+    import r._
+    r.interface.f(5)
+    r.interface.f(17)
+    r.close()
     whenReady(f) { x =>
       x should have length 2
       x shouldBe Seq(
-        Request(Id.Long(0),"f",NamedParameters(Map("x" -> Json.fromInt(42)))),
-        Request(Id.Long(1),"f",NamedParameters(Map("x" -> Json.fromInt(17))))
+        Request(Id.Long(0),"call/something",Json.fromInt(5)),
+        Request(Id.Long(1),"call/something",Json.fromInt(17))
       )
     }
   }
 
+  /*
   it should "produce notification messages for methods " +
     "with return Unit" in {
     val remote = Remote[ExampleInterfaces.Simple](Id.standard)
@@ -224,5 +188,5 @@ class RemoteInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
       r shouldBe a[ResponseError]
       r.getMessage shouldEqual "fail!"
     }
-  }
+  } */
 }

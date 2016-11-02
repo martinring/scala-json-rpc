@@ -8,6 +8,11 @@ val versions = new {
   val scala = "2.11.8"
 }
 
+val commonSetings = Seq(
+  scalaVersion := versions.scala,
+  scalaVersion in ThisBuild := versions.scala
+)
+
 lazy val root = project.in(file("."))
   .aggregate(libJS,libJVM)
   .settings(
@@ -16,7 +21,7 @@ lazy val root = project.in(file("."))
     test := Def.sequential(test in libJVM, test in libJS),
     run := {},
     publishLocal := {}
-  )
+  ).settings(commonSetings :_*)
 
 lazy val lib: CrossProject = crossProject.in(file("."))
   .settings(
@@ -25,14 +30,14 @@ lazy val lib: CrossProject = crossProject.in(file("."))
     name := "jsonrpc",
     version := "0.4.0",
     sourceDirectories in Test := Seq.empty,
-    scalaVersion := "2.11.8",
+    //crossScalaVersions := Seq("2.11.8","2.12.0"),
     organization := "net.flatmap",
     libraryDependencies ++= Seq(
       "io.circe" %%% "circe-core",
       "io.circe" %%% "circe-generic",
       "io.circe" %%% "circe-parser"
     ).map(_ % versions.circe)
-  ).jsSettings(
+  ).settings(commonSetings :_*).jsSettings(
     test := test in testJS,
     libraryDependencies += "eu.unicredit" %%% "akkajsactorstream" %
       ("0." + versions.akka)
@@ -46,11 +51,10 @@ lazy val libJVM = lib.jvm
 
 lazy val macroTest = crossProject.in(file("."))
   .settings(
-    scalaVersion := "2.11.8",
     target := target.value / "test",
     libraryDependencies += "org.scalatest" %%% "scalatest" %
       versions.scalatest % "test"
-  ).dependsOn(lib)
+  ).settings(commonSetings :_*).dependsOn(lib)
 
 lazy val testJS  = macroTest.js
 lazy val testJVM = macroTest.jvm

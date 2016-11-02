@@ -34,22 +34,6 @@ sealed trait Message {
   val jsonrpc = "2.0"
 }
 
-sealed trait ParameterList {
-  def json: Json
-}
-case object NoParameters extends ParameterList {
-  def json = Json.obj()
-}
-case class PositionedParameters(val params: IndexedSeq[Json]) extends ParameterList {
-  require(params.nonEmpty)
-  def json = sys.error("Positioned Parameters cannot be interpreted as JSON Object")
-}
-case class NamedParameters(val params: Map[String,Json]) extends ParameterList {
-  require(params.nonEmpty)
-  def json = Json.obj(params.toSeq :_*)
-
-}
-
 sealed trait RequestMessage extends Message {
   /**
     * A String containing the name of the method to be invoked. Method names
@@ -59,16 +43,13 @@ sealed trait RequestMessage extends Message {
     */
   val method: String
   def prefixed(prefix: String): RequestMessage = this match {
-    case r: ResolveableRequest => r.copy(method = prefix + method)
     case r: Request      => r.copy(method = prefix + method)
     case n: Notification => n.copy(method = prefix + method)
   }
 }
 
-case class Request(id: Id, method: String, params: ParameterList)
+case class Request(id: Id, method: String, params: Json)
   extends RequestMessage
-
-private [jsonrpc] case class ResolveableRequest(method: String, params: ParameterList, promise: Promise[Json], id: Option[Id] = None) extends RequestMessage
 
 /**
   * A Notification is a Request object without an "id" member. A Request object
@@ -88,10 +69,10 @@ private [jsonrpc] case class ResolveableRequest(method: String, params: Paramete
   *               during the invocation of the method. This member MAY be
   *               omitted.
   */
-case class Notification(method: String, params: ParameterList)
+case class Notification(method: String, params: Json)
   extends RequestMessage
 
-sealed trait Response extends Message {
+sealed trait ResponseMessage extends Message {
   /**
     * This member is REQUIRED.
     * It MUST be the same as the value of the id member in the Request Object.
@@ -102,20 +83,19 @@ sealed trait Response extends Message {
 }
 
 object Response {
-
   /**
     * @param id     If there was an error in detecting the id in the Request
     *               object (e.g. Parse error/Invalid Request), it MUST be Null.
     * @param result The value of this member is determined by the method invoked
     *               on the Server.
     */
-  case class Success(id: Id, result: Json) extends Response
+  case class Success(id: Id, result: Json) extends ResponseMessage
 
   /**
     * @param id If there was an error in detecting the id in the Request
     *           object (e.g. Parse error/Invalid Request), it MUST be Null.
     */
-  case class Failure(id: Id, error: ResponseError) extends Response
+  case class Failure(id: Id, error: ResponseError) extends ResponseMessage
 
 }
 

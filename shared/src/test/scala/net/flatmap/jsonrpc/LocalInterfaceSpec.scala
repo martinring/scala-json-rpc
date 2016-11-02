@@ -1,5 +1,5 @@
 package net.flatmap.jsonrpc
-
+/*
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl._
@@ -235,3 +235,4 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
   }
 
 }
+*/

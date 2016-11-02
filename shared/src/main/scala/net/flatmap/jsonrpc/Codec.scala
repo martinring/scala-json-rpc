@@ -52,14 +52,6 @@ object Codec {
     }
   }
 
-  implicit val parameterListEncoder = new Encoder[ParameterList] {
-    override def apply(a: ParameterList): Json = a match {
-      case NoParameters => Json.Null
-      case NamedParameters(params) => Json.obj(params.toSeq :_*)
-      case PositionedParameters(params) => Json.arr(params :_*)
-    }
-  }
-
   implicit val requestEncoder =
     Encoder.forProduct4("id","method","params","jsonrpc")((r: Request) => (r.id,r.method,r.params,r.jsonrpc))
 
@@ -70,7 +62,6 @@ object Codec {
     override def apply(a: RequestMessage): Json = a match {
       case r: Request => requestEncoder(r)
       case n: Notification => notificationEncoder(n)
-      case r: ResolveableRequest => sys.error("Resolvable Requests are not serializable")
     }
   }
 
@@ -83,8 +74,8 @@ object Codec {
   implicit val failureEncoder =
     Encoder.forProduct3("id","error","jsonrpc")((r: Response.Failure) => (r.id,r.error,r.jsonrpc))
 
-  implicit val responseEncoder = new Encoder[Response] {
-    override def apply(a: Response): Json = a match {
+  implicit val responseEncoder = new Encoder[ResponseMessage] {
+    override def apply(a: ResponseMessage): Json = a match {
       case s: Response.Success => successEncoder(s)
       case f: Response.Failure => failureEncoder(f)
     }
@@ -92,7 +83,7 @@ object Codec {
 
   implicit val encode = new Encoder[Message] {
     override def apply(a: Message): Json = a match {
-      case a: Response => responseEncoder(a)
+      case a: ResponseMessage => responseEncoder(a)
       case x: RequestMessage => requestMessageEncoder(x)
     }
   }
@@ -101,19 +92,6 @@ object Codec {
     override def apply(c: HCursor): Result[Id] =
       c.as[Long].map(Id.Long) orElse c.as[String].map(Id.String)
   }
-
-  private[this] final val rightNoParams: Xor[DecodingFailure,ParameterList] =
-    Xor.right(NoParameters)
-
-  implicit val parameterListDecoder: Decoder[ParameterList] =
-    Decoder.withReattempt(c => if(c.succeeded) {
-      if (c.any.focus.isNull) rightNoParams else {
-        c.any.as[Map[String,Json]].map(NamedParameters) orElse
-        c.any.as[IndexedSeq[Json]].map(PositionedParameters)
-      }
-    } else if (!c.history.takeWhile(_.failed).exists(_.incorrectFocus)) rightNoParams else {
-      Xor.left(DecodingFailure("[A]ParameterList[A]", c.history))
-    })
 
   implicit val requestDecoder =
     Decoder.forProduct3("id","method","params")(Request.apply)
@@ -138,8 +116,8 @@ object Codec {
   implicit val failureDecoder =
     Decoder.forProduct2("id","error")(Response.Failure.apply)
 
-  implicit val responseDecoder = new Decoder[Response] {
-    override def apply(c: HCursor): Result[Response] = {
+  implicit val responseDecoder = new Decoder[ResponseMessage] {
+    override def apply(c: HCursor): Result[ResponseMessage] = {
       val r = for (fields <- c.fieldSet if !fields.contains("error")) yield
         c.as[Response.Success].map(x => x)
       r.getOrElse(c.as[Response.Failure].map(x => x))
@@ -151,7 +129,7 @@ object Codec {
     override def apply(c: HCursor): Result[Message] = {
       val r = for (fields <- c.fieldSet if fields.contains("method")) yield
         c.as[RequestMessage].map(x => x)
-      r.getOrElse(c.as[Response].map(x => x))
+      r.getOrElse(c.as[ResponseMessage].map(x => x))
     }
   }
 }

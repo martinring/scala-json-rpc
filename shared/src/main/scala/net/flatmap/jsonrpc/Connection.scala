@@ -10,6 +10,7 @@ import net.flatmap.jsonrpc.util._
 import scala.concurrent.Promise
 import scala.util.Try
 
+/*
 trait Connection[L,R] {
   def local: L
   def remote: R
@@ -68,3 +69,4 @@ object Connection { self =>
     stack.reversed.joinMat(handler)(Keep.right)
   }
 }
+*/
