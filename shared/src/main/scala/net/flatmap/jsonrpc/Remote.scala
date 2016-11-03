@@ -1,13 +1,16 @@
 package net.flatmap.jsonrpc
 
-import akka.actor.{ActorRef, Props}
+import akka.actor.{ActorRef, Cancellable, Props}
 import akka.stream.actor._
 import akka.stream._
 import akka.stream.actor.ActorSubscriberMessage.{OnComplete, OnNext}
 import akka.stream.scaladsl._
+
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import akka.pattern.ask
 import akka.util.Timeout
+
+import scala.reflect.ClassTag
 
 
 class Remote[I <: Interface] private (val interface: I,
@@ -15,32 +18,38 @@ class Remote[I <: Interface] private (val interface: I,
                                       ids: Iterator[Id])
                                      (implicit ec: ExecutionContext) {
 
-  implicit class callableRequestType[P,R,E](rt: interface.RequestType[P,R,E]) {
-    def apply(p: P)(implicit timeout: Timeout): Future[R] = {
-      val response = for {
-        future   <- (sink ? Request(ids.next(),rt.name,rt.paramEncoder(p)))
-          .mapTo[Future[ResponseMessage]]
-        response <- future
-      } yield response
+  def call[P,R,E](rt: interface.RequestType[P,R,E])(p: P)
+                 (implicit timeout: Timeout): Future[R] = {
+    val response = for {
+      future   <- (sink ? Request(ids.next(),rt.name,rt.paramEncoder(p)))
+        .mapTo[Future[ResponseMessage]]
+      response <- future
+    } yield response
 
-      response.flatMap {
-        case Response.Success(_, json) =>
-          Future.fromTry(rt.resultDecoder.decodeJson(json).toTry)
-        case Response.Failure(_, json) =>
-          Future.failed(json)
-      }
+    response.flatMap {
+      case Response.Success(_, json) =>
+        Future.fromTry(rt.resultDecoder.decodeJson(json).toTry)
+      case Response.Failure(_, json) =>
+        Future.failed(json)
     }
   }
 
+  def call[P](nt: interface.NotificationType[P])(p: P) = {
+    sink ! Notification(nt.name,nt.paramEncoder(p))
+  }
+
+  implicit class callableRequestType[P,R,E](rt: interface.RequestType[P,R,E]) {
+    def apply(p: P)(implicit timeout: Timeout): Future[R] = call(rt)(p)
+  }
+
   implicit class callableNotificationType[P](nt: interface.NotificationType[P]) {
-    def apply(p: P): Unit = {
-      sink ! Notification(nt.name,nt.paramEncoder(p))
-    }
+    def apply(p: P): Unit = call(nt)(p)
   }
 
   private var closed = false
 
-  def close()(implicit timeout: Timeout) = sink ! ResponseResolver.Cancel(timeout)
+  def close()(implicit timeout: Timeout) = if (!closed)
+    sink ! ResponseResolver.Cancel(timeout)
 }
 
 private object ResponseResolver {
@@ -56,7 +65,7 @@ private class ResponseResolver extends ActorSubscriber {
   implicit val dispatcher = context.dispatcher
 
   def receive = {
-    case source: SourceQueueWithComplete[RequestMessage] =>
+    case source: SourceQueueWithComplete[RequestMessage @unchecked] =>
       context.become(initialized(source,Map.empty))
   }
 
@@ -86,12 +95,15 @@ private class ResponseResolver extends ActorSubscriber {
       source.offer(n)
     case ResponseResolver.Cancel(timeout) =>
       source.complete()
-      context.system.scheduler.scheduleOnce(timeout.duration,self,CancelUpstream)
-      context.become(shuttingDown(sender, pending))
+      val t = context.system.scheduler.scheduleOnce(timeout.duration,self,CancelUpstream)
+      context.become(shuttingDown(sender, pending, t))
   }
 
-  def shuttingDown(sender: ActorRef, pending: Map[Id,Promise[ResponseMessage]]): Receive = {
-    if (pending.isEmpty) cancel()
+  def shuttingDown(sender: ActorRef, pending: Map[Id,Promise[ResponseMessage]], timeout: Cancellable): Receive = {
+    if (pending.isEmpty) {
+      timeout.cancel()
+      cancel()
+    }
 
     {
       case OnNext(response: ResponseMessage) =>
@@ -99,7 +111,7 @@ private class ResponseResolver extends ActorSubscriber {
           // We are not waiting for this reponse...
           // TODO: Do something
         } { promise =>
-          context.become(shuttingDown(sender, pending - response.id))
+          context.become(shuttingDown(sender, pending - response.id, timeout))
           promise.success(response)
         }
       case OnComplete =>
@@ -108,8 +120,10 @@ private class ResponseResolver extends ActorSubscriber {
             ResponseError(ErrorCodes.InternalError,"closed source")
           )
         }
+        timeout.cancel()
         context.stop(self)
       case CancelUpstream =>
+        timeout.cancel()
         cancel()
     }
   }

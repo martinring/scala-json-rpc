@@ -96,7 +96,6 @@ object Response {
     *           object (e.g. Parse error/Invalid Request), it MUST be Null.
     */
   case class Failure(id: Id, error: ResponseError) extends ResponseMessage
-
 }
 
 /**

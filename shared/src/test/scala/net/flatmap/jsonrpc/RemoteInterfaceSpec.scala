@@ -32,8 +32,10 @@ object ExampleError {
 }
 
 object SimpleInterface extends Interface {
-  val request = RequestType[Int,String,ExampleError]("example/request")
-  val notification = NotificationType[String]("example/notification")
+  val exampleRequest =
+    request[Int,String,ExampleError]("example/request")
+  val exampleNotification =
+    notification[String]("example/notification")
 }
 
 
@@ -61,8 +63,8 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
     val ((p,r), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
     import r._
-    r.interface.request(5)
-    r.interface.request(17)
+    r.interface.exampleRequest(5)
+    r.interface.exampleRequest(17)
     r.close()
     f.map { x =>
       x should have length 2
@@ -80,8 +82,8 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
     val ((p,r), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
     import r._
-    r.interface.notification("foo")
-    r.interface.notification("bar")
+    r.interface.exampleNotification("foo")
+    r.interface.exampleNotification("bar")
     r.close()
     f.map { x =>
       x should have length 2
@@ -101,9 +103,9 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
     import r._
 
-    val x = r.interface.request(42) // Id.Long(0)
-    val y = r.interface.request(17) // Id.Long(1)
-    val z = r.interface.request(19) // Id.Long(2)
+    val x = r.interface.exampleRequest(42) // Id.Long(0)
+    val y = r.interface.exampleRequest(17) // Id.Long(1)
+    val z = r.interface.exampleRequest(19) // Id.Long(2)
 
     // respond to call "y"
     p.offer(Response.Success(Id.Long(1),Json.fromString("y")))
@@ -122,7 +124,6 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
       y shouldEqual("y")
       z shouldEqual("z")
     }
-
   }
 
   it should "fail the futures when responding to a request with an error" in {
@@ -134,9 +135,9 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
     import r._
 
-    val x = r.interface.request(42) // Id.Long(0)
-    val y = r.interface.request(17) // Id.Long(1)
-    val z = r.interface.request(19) // Id.Long(2)
+    val x = r.interface.exampleRequest(42) // Id.Long(0)
+    val y = r.interface.exampleRequest(17) // Id.Long(1)
+    val z = r.interface.exampleRequest(19) // Id.Long(2)
 
     // respond to call "y"
     p.success(Some(Response.Failure(Id.Long(1), ResponseError(
@@ -160,9 +161,9 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
     import r._
 
-    val x = r.interface.request(42) // Id.Long(0)
-    val y = r.interface.request(17) // Id.Long(1)
-    val z = r.interface.request(19) // Id.Long(2)
+    val x = r.interface.exampleRequest(42) // Id.Long(0)
+    val y = r.interface.exampleRequest(17) // Id.Long(1)
+    val z = r.interface.exampleRequest(19) // Id.Long(2)
 
     // respond to call "y"
     p.success(Some(Response.Failure(Id.Long(1), ResponseError(

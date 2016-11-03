@@ -1,77 +1,68 @@
 package net.flatmap.jsonrpc
-/*
+
+import java.util.concurrent.TimeUnit
+
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl._
+import akka.util.Timeout
+import com.typesafe.config.ConfigFactory
 import io.circe.Json
-import net.flatmap.jsonrpc.ExampleInterfaces.{Nested, Other}
 import org.scalatest._
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.time._
 
 import scala.concurrent.duration._
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.{Future, Promise}
 
-object ExampleImplementations {
-  class Simple extends ExampleInterfaces.Simple {
-    var lastCallTog = ""
-    def f(x: Int): Future[String] = Future.successful(x.toString)
-    def g(x: String) = lastCallTog = x
+object ExampleImpl {
+  def implementation = {
+    val local = Local(SimpleInterface)
+    import local._
+    implement(
+      on(SimpleInterface.exampleRequest) { p =>
+        p.toString
+      },
+      on(SimpleInterface.exampleNotification) { p =>
 
-    def nested = new Nested {
-      override def foo(): Future[Int] = Future.successful(42)
-    }
-    override def h(x: String): Unit = ???
-
-    def optional(f: String, y: Option[Int]): Future[String] =
-      Future.successful(List.fill(y.getOrElse(1))(f).mkString)
-
-    def additional(x: String): Future[String] = Future.successful(x.reverse)
-    def spreaded(p: ExampleParam): Future[String] = Future.successful(
-      p.a + p.b + p.c
+      }
     )
-  }
-
-  class Unimplemented extends ExampleInterfaces.Simple {
-    def f(x: Int): Future[String] = ???
-    def g(x: String): Unit = ???
-    def h(x: String): Unit = ???
-    def nested: Nested = ???
-    def optional(f: String, y: Option[Int]): Future[String] = ???
-    def spreaded(p: ExampleParam): Future[String] = ???
   }
 }
 
-
-class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
-  implicit val system = ActorSystem()
+class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
+  implicit val system = ActorSystem("test-system",ConfigFactory.parseString("akka.loglevel = \"INFO\""))
   implicit val materializer = ActorMaterializer()
-  implicit val dispatcher = system.dispatcher
+  implicit override def executionContext =
+    scala.concurrent.ExecutionContext.Implicits.global
+  implicit val requestTimeout = Timeout(1,TimeUnit.SECONDS)
   implicit override val patienceConfig: PatienceConfig =
     PatienceConfig(Span(500, Milliseconds))
 
-  def run(block: => Unit) = system.scheduler.scheduleOnce(0 millis)(block)
+  override def withFixture(test: NoArgAsyncTest): FutureOutcome = {
+    val p = Promise[Outcome]
+    system.scheduler.scheduleOnce(0.seconds) {
+      p.completeWith(test.apply().toFuture)
+    }
+    new FutureOutcome(p.future)
+  }
 
-  "a derived local interface" should "process request messages for " +
-    "methods with return type Future[T]" in {
-    val local =
-      Local[ExampleInterfaces.Simple]
+  "a local interface" should "process request messages" in {
+    val local = ExampleImpl.implementation
     val source = Source.single[RequestMessage](
-      Request(Id.Long(0),"f",NamedParameters(Map("x" ->
-        Json.fromInt(42))))
+      Request(Id.Long(0),SimpleInterface.exampleRequest.name,Json.fromInt(42))
     )
-    val sink = Sink.seq[Response]
+    val sink = Sink.seq[ResponseMessage]
     val (l,f) =
       source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
-    l.success(Some(new ExampleImplementations.Simple))
-    whenReady(f) { x =>
+    f.map { x =>
       x should have length 1
       x shouldBe Seq(
         Response.Success(Id.Long(0),Json.fromString("42"))
       )
     }
   }
-
+/*
   it should "respect methods from mixed-in traits" in {
     val local =
       Local[ExampleInterfaces.Simple with ExampleInterfaces.Other]
@@ -233,6 +224,5 @@ class LocalInterfaceSpec extends FlatSpec with Matchers with ScalaFutures {
       x.head.asInstanceOf[Response.Failure].error.code shouldBe ErrorCodes.InvalidParams
     }
   }
-
-}
 */
+}
