@@ -9,34 +9,42 @@ import scala.util.{Failure, Try}
 
 case class Local[I <: Interface](interface: I) {
   def on[P](notification: interface.NotificationType[P])(body: P => Unit): Flow[RequestMessage,ResponseMessage,NotUsed] =
-    Flow[RequestMessage].collect {
-      case n: Notification if n.method == notification.name => Try {
+    Flow[RequestMessage].collect[Option[ResponseMessage]] {
+      case n: Notification if n.method == notification.name =>
         val param = notification.paramDecoder.decodeJson(n.params)
-        body(param.toTry.get)
-      }
-    } .collect {
-      case Failure(exception: ResponseError) =>
-        Response.Failure(Id.Null,exception)
-      case Failure(NonFatal(other)) =>
-        Response.Failure(Id.Null,ResponseError(ErrorCodes.InternalError,other.getMessage,None))
-    }
+        param.fold[Option[ResponseMessage]]({ failure =>
+          val err = ResponseError(ErrorCodes.InvalidParams, failure.message)
+          Some(Response.Failure(Id.Null, err))
+        }, { param =>
+          Try(body(param)).map(_ => None).recover[Option[ResponseMessage]] {
+            case err: ResponseError =>
+              Some(Response.Failure(Id.Null, err))
+            case NonFatal(other) =>
+              val err = ResponseError(ErrorCodes.InternalError, other.getMessage)
+              Some(Response.Failure(Id.Null, err))
+          }.get
+        })
+    }.collect{ case Some(x) => x }
 
   def on[P,R,E](request: interface.RequestType[P,R,E])(body: P => R): Flow[RequestMessage,ResponseMessage,NotUsed] = {
     Flow[RequestMessage].collect {
-      case r: Request if r.method == request.name => Try {
+      case r: Request if r.method == request.name =>
         val param = request.paramDecoder.decodeJson(r.params)
-        val result = body(param.toTry.get)
-        Response.Success(r.id, request.resultEncoder(result))
-      }.recover {
-        case e: ResponseError => Response.Failure(r.id,e)
-        case NonFatal(other) =>
-          Response.Failure(r.id,ResponseError(ErrorCodes.InternalError,other.getMessage,None))
-      }.get
+        param.fold({ failure =>
+          val err = ResponseError(ErrorCodes.InvalidParams, failure.message)
+          Response.Failure(r.id,err)
+        }, { param =>
+          Try(body(param)).map[ResponseMessage] { result =>
+            Response.Success(r.id,request.resultEncoder(result))
+          } .recover[ResponseMessage] {
+            case err: ResponseError =>
+              Response.Failure(r.id,err)
+            case NonFatal(other) =>
+              val err = ResponseError(ErrorCodes.InternalError,other.getMessage)
+              Response.Failure(r.id,err)
+          }.get
+        })
     }
-  }
-
-  on[Unit,Unit,Unit](null) { x =>
-    
   }
 
   def implement[S](methods: Flow[RequestMessage,ResponseMessage,NotUsed]*) = {

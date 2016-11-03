@@ -1,11 +1,11 @@
 import org.scalajs.sbtplugin.cross.CrossProject
 import sbt.Keys._
 
-scalaVersion in ThisBuild := "2.11.8"
+scalaVersion in ThisBuild := "2.12.0"
 
 val versions = new {
-  val circe = "0.5.4"
-  val akka = "2.4.11"
+  val circe = "0.6.0-RC1"
+  val akka = "2.4.12"
   val scalatest = "3.0.0"
   val scala = "2.11.8"
 }
@@ -23,9 +23,10 @@ lazy val lib: CrossProject = crossProject.in(file("."))
     bintrayOrganization := Some("flatmap"),
     licenses += ("MIT", url("http://opensource.org/licenses/MIT")),
     name := "jsonrpc",
-    version := "0.4.0",
+    version := "0.5.0",
     sourceDirectories in Test := Seq.empty,
-    scalaVersion := "2.11.8",
+    scalaVersion := versions.scala,
+    crossScalaVersions := Seq("2.10.6"),
     organization := "net.flatmap",
     libraryDependencies ++= Seq(
       "io.circe" %%% "circe-core",

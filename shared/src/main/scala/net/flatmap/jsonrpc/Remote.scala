@@ -28,7 +28,10 @@ class Remote[I <: Interface] private (val interface: I,
 
     response.flatMap {
       case Response.Success(_, json) =>
-        Future.fromTry(rt.resultDecoder.decodeJson(json).toTry)
+        rt.resultDecoder.decodeJson(json).fold({ failure =>
+          val err = ResponseError(ErrorCodes.ParseError, "result could not be parsed")
+          Future.failed(err)
+        }, Future.successful)
       case Response.Failure(_, json) =>
         Future.failed(json)
     }
