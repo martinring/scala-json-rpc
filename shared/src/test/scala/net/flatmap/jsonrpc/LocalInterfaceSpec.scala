@@ -15,19 +15,18 @@ import org.scalatest.time._
 import scala.concurrent.duration._
 import scala.concurrent.{Future, Promise}
 
-object ExampleImpl {
-  def implementation = {
-    val local = Local(SimpleInterface)
-    import local._
-    implement(
-      on(SimpleInterface.exampleRequest) { p =>
-        p.toString
-      },
-      on(SimpleInterface.exampleNotification) { p =>
+class ExampleImpl extends Local(SimpleInterface) {
+  private val promise = Promise[String]
+  val notificationValue = promise.future
 
-      }
-    )
-  }
+  val implementation = Set(
+    SimpleInterface.exampleRequest := { i =>
+      i.toString
+    },
+    SimpleInterface.exampleNotification := { s =>
+      promise.trySuccess(s)
+    }
+  )
 }
 
 class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
@@ -48,13 +47,13 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   }
 
   "a local interface" should "process request messages" in {
-    val local = ExampleImpl.implementation
+    val local = new ExampleImpl
     val source = Source.single[RequestMessage](
       Request(Id.Long(0),SimpleInterface.exampleRequest.name,Json.fromInt(42))
     )
     val sink = Sink.seq[ResponseMessage]
     val (l,f) =
-      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
+      source.viaMat(local.flow)(Keep.right).toMat(sink)(Keep.both).run()
     f.map { x =>
       x should have length 1
       x shouldBe Seq(
@@ -62,133 +61,20 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
       )
     }
   }
-/*
-  it should "respect methods from mixed-in traits" in {
-    val local =
-      Local[ExampleInterfaces.Simple with ExampleInterfaces.Other]
-    val source = Source.single(Request(Id.Long(0),"other/hallo",NoParameters))
-    val sink = Sink.seq[Response]
-    val (l,f) =
-      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
-    class Blub extends ExampleImplementations.Simple with Other {
-      def hallo(): Future[String] = Future.successful("yay!")
-    }
-    val interface = new Blub
-    l.success(Some(interface))
-    whenReady(f) { x =>
-      x should have length 1
-      x shouldBe Seq(
-        Response.Success(Id.Long(0),Json.fromString("yay!"))
-      )
-    }
-  }
 
-  it should "respect spread param annotations" in {
-    val local =
-      Local[ExampleInterfaces.Simple]
-    val param = ExampleParam(1,"2",true)
-    val paramEnc = ExampleParam.encoder(param)
-    val source = Source.single(Request(Id.Long(0),"spreaded",NamedParameters(paramEnc.asObject.get.toMap)))
-    val sink = Sink.seq[Response]
-    val (l,f) =
-      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
-    val interface = new ExampleImplementations.Simple
-    l.success(Some(interface))
-    whenReady(f) { x =>
-      x should have length 1
-      x shouldBe Seq(
-        Response.Success(Id.Long(0),Json.fromString(param.a + param.b + param.c))
-      )
-    }
-  }
-
-  it should "process notification messages for " +
-    "methods with return type Future[T]" in {
-    val local =
-      Local[ExampleInterfaces.Simple]
-    val source = Source.single(Notification("g",NamedParameters(Map("x" ->
-      Json.fromString("42")))))
-    val sink = Sink.seq[Response]
-    val (l,f) =
-      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
-    val interface = new ExampleImplementations.Simple
-    l.success(Some(interface))
-    whenReady(f) { x =>
-      x shouldBe empty
-      interface.lastCallTog shouldBe "42"
-    }
-  }
-
-  it should "handle positioned parameters" in {
-    val local =
-      Local[ExampleInterfaces.Simple]
-    val source = Source.maybe[RequestMessage]
-    val sink = Sink.seq[Response]
-    val ((p,l), f) =
-      source.viaMat(local)(Keep.both).toMat(sink)(Keep.both).run()
-    l.success(Some(new ExampleImplementations.Simple))
-    p.success(Some(Request(Id.Long(0),"f",PositionedParameters(Array(Json.fromInt(42))))))
-    whenReady(f) { x =>
-      x should have length 1
-      x shouldBe Seq(
-        Response.Success(Id.Long(0),Json.fromString("42"))
-      )
-    }
-  }
-
-  it should "handle nested namespaces" in {
-    val local =
-      Local[ExampleInterfaces.Simple]
-    val source = Source.maybe[RequestMessage]
-    val sink = Sink.seq[Response]
-    val ((p,l), f) =
-      source.viaMat(local)(Keep.both).toMat(sink)(Keep.both).run()
-    l.success(Some(new ExampleImplementations.Simple))
-    p.success(Some(Request(Id.Long(0),"nested/foo",NoParameters)))
-    whenReady(f) { x =>
-      x should have length 1
-      x shouldBe Seq(
-        Response.Success(Id.Long(0),Json.fromInt(42))
-      )
-    }
-  }
-
-  it should "not expose methods not part of rpc protocol" in {
-    val local =
-      Local[ExampleInterfaces.Simple]
+  it should "process notification messages" in {
+    val local = new ExampleImpl
     val source = Source.single[RequestMessage](
-      Request(Id.Long(0),"additional",NamedParameters(Map("x" ->
-        Json.fromString("param"))))
+      Notification(SimpleInterface.exampleNotification.name,Json.fromString("boo!"))
     )
-    val sink = Sink.seq[Response]
-    val (l,f) =
-      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
-    l.success(Some(new ExampleImplementations.Simple))
-    whenReady(f) { x =>
-      x should have length 1
-      x.head shouldBe a[Response.Failure]
-      x.head.asInstanceOf[Response.Failure].error.code shouldBe ErrorCodes.MethodNotFound
+    val sink = Sink.seq[ResponseMessage]
+    source.via(local.flow).to(sink).run()
+    local.notificationValue.map { x =>
+      x shouldBe "boo!"
     }
   }
 
-  it should "handle omitted optional parameters" in {
-    val local =
-      Local[ExampleInterfaces.Simple]
-    val source = Source.maybe[RequestMessage]
-    val sink = Sink.seq[Response]
-    val ((p,l), f) =
-      source.viaMat(local)(Keep.both).toMat(sink)(Keep.both).run()
-    l.success(Some(new ExampleImplementations.Simple))
-    p.success(Some(Request(Id.Long(0),"optional",NamedParameters(Map("f" ->
-      Json.fromString("test"))))))
-    whenReady(f) { x =>
-      x should have length 1
-      x shouldBe Seq(
-        Response.Success(Id.Long(0),Json.fromString("test"))
-      )
-    }
-  }
-
+  /*
   it should "return failure responses for missing implementations" in {
     val local =
       Local[ExampleInterfaces.Simple]
@@ -223,6 +109,5 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
       x.head shouldBe a[Response.Failure]
       x.head.asInstanceOf[Response.Failure].error.code shouldBe ErrorCodes.InvalidParams
     }
-  }
-*/
+  }*/
 }

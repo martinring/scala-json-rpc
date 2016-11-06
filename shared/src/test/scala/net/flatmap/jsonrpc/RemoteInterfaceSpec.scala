@@ -8,6 +8,7 @@ import akka.stream.scaladsl._
 import akka.util.Timeout
 import com.typesafe.config.ConfigFactory
 import io.circe.Json
+import net.flatmap.jsonrpc
 import org.scalatest._
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.time._
@@ -57,14 +58,13 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
   }
 
   "a remote interface" should "produce request messages" in {
-    val remote = Remote(SimpleInterface,Id.standard)
-    val source = Source.empty
+    val remote = Remote(SimpleInterface)
+    val source = Source.maybe[ResponseMessage]
     val sink = Sink.seq[RequestMessage]
     val ((p,r), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
-    import r._
-    r.interface.exampleRequest(5)
-    r.interface.exampleRequest(17)
+    SimpleInterface.exampleRequest(5)(r,requestTimeout)
+    SimpleInterface.exampleRequest(17)(r,requestTimeout)
     r.close()
     f.map { x =>
       x should have length 2
@@ -76,14 +76,13 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
   }
 
   it should "produce notification messages" in {
-    val remote = Remote(SimpleInterface,Id.standard)
-    val source = Source.empty
+    val remote = Remote(SimpleInterface)
+    val source = Source.maybe[ResponseMessage]
     val sink = Sink.seq[RequestMessage]
     val ((p,r), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
-    import r._
-    r.interface.exampleNotification("foo")
-    r.interface.exampleNotification("bar")
+    r.interface.exampleNotification("foo")(r)
+    r.interface.exampleNotification("bar")(r)
     r.close()
     f.map { x =>
       x should have length 2
@@ -99,9 +98,8 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
     val source = Source.queue[ResponseMessage](3,OverflowStrategy.fail)
     val sink = Sink.seq[RequestMessage]
 
-    val ((p,r), f) =
+    implicit val ((p,r), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
-    import r._
 
     val x = r.interface.exampleRequest(42) // Id.Long(0)
     val y = r.interface.exampleRequest(17) // Id.Long(1)
@@ -131,9 +129,8 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
     val source = Source.maybe[ResponseMessage]
     val sink = Sink.seq[RequestMessage]
 
-    val ((p,r), f) =
+    implicit val ((p,r), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
-    import r._
 
     val x = r.interface.exampleRequest(42) // Id.Long(0)
     val y = r.interface.exampleRequest(17) // Id.Long(1)
@@ -157,9 +154,8 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
     val source = Source.maybe[ResponseMessage]
     val sink = Sink.seq[RequestMessage]
 
-    val ((p,r), f) =
+    implicit val ((p,r), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
-    import r._
 
     val x = r.interface.exampleRequest(42) // Id.Long(0)
     val y = r.interface.exampleRequest(17) // Id.Long(1)
@@ -175,6 +171,28 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
     z.failed.map { r =>
       r shouldBe a[ResponseError]
       r.getMessage shouldEqual "closed source"
+    }
+  }
+
+  it should "send cancellation notifications for cancelled futures" in {
+    val remote = Remote(SimpleInterface,Id.standard)
+    val source = Source.maybe[ResponseMessage]
+    val sink = Sink.seq[RequestMessage]
+
+    implicit val ((p,r), f) =
+      source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
+
+    val x = r.interface.exampleRequest(42) // Id.Long(0)
+    val y = r.interface.exampleRequest(17) // Id.Long(1)
+    val z = r.interface.exampleRequest(19) // Id.Long(2)
+
+    // cancel "y"
+    y.cancel()
+
+    y.onComplete(_ => r.close())
+
+    f.map { messages =>
+      messages should contain (Notification("$/cancel",Json.obj("id" -> Json.fromLong(1))))
     }
   }
 }
