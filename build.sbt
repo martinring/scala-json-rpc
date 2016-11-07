@@ -1,7 +1,7 @@
 import org.scalajs.sbtplugin.cross.CrossProject
 import sbt.Keys._
 
-scalaVersion in ThisBuild := "2.12.0"
+scalaVersion in ThisBuild := "2.11.8"
 
 val versions = new {
   val circe = "0.6.0-RC1"
@@ -26,7 +26,6 @@ lazy val lib: CrossProject = crossProject.in(file("."))
     version := "0.5.0",
     sourceDirectories in Test := Seq.empty,
     scalaVersion := versions.scala,
-    crossScalaVersions := Seq("2.10.6"),
     organization := "net.flatmap",
     libraryDependencies ++= Seq(
       "io.circe" %%% "circe-core",
@@ -37,6 +36,7 @@ lazy val lib: CrossProject = crossProject.in(file("."))
   ).jsSettings(
     libraryDependencies += "eu.unicredit" %%% "akkajsactorstream" % ("0." + versions.akka)
   ).jvmSettings(
+    //crossScalaVersions := Seq("2.12.0-RC2"),
     libraryDependencies += "com.typesafe.akka" %% "akka-stream" % versions.akka
   )
 

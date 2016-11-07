@@ -1,10 +1,11 @@
 package net.flatmap.jsonrpc
 
+import akka.NotUsed
+import akka.stream.scaladsl.{Flow, Sink}
 import akka.util.Timeout
 import io.circe.{Decoder, Encoder}
 import net.flatmap.jsonrpc.util.CancellableFuture
-
-import scala.concurrent._
+import shapeless.Generic
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -21,7 +22,11 @@ trait Interface { self =>
     val handler: RequestHandler
   }
 
-  type RequestHandler = PartialFunction[RequestMessage,Future[Option[ResponseMessage]]]
+  type RequestFlow = Flow[RequestMessage,ResponseMessage,NotUsed]
+
+  type RequestHandler = PartialFunction[RequestMessage,Option[ResponseMessage]]
+
+  type NotificationHandler = Sink[Notification,NotUsed]
 
   class RequestImplementation[P,R,E] private [Interface] (
     val request: RequestType[P,R,E],
@@ -40,16 +45,16 @@ trait Interface { self =>
           val param = paramDecoder.decodeJson(r.params)
           param.fold({ failure =>
             val err = ResponseError(ErrorCodes.InvalidParams, failure.message)
-            Future.successful(Some(Response.Failure(r.id,err)))
+            Some(Response.Failure(r.id,err))
           }, { param =>
-            Try(body(param)).map[Future[Option[ResponseMessage]]] { result =>
-              Future.successful(Some(Response.Success(r.id,resultEncoder(result))))
-            } .recover[Future[Option[ResponseMessage]]] {
+            Try(body(param)).map[Option[ResponseMessage]] { result =>
+              Some(Response.Success(r.id,resultEncoder(result)))
+            } .recover[Option[ResponseMessage]] {
               case err: ResponseError =>
-                Future.successful(Some(Response.Failure(r.id,err)))
+                Some(Response.Failure(r.id,err))
               case NonFatal(other) =>
                 val err = ResponseError(ErrorCodes.InternalError,other.getMessage)
-                Future.successful(Some(Response.Failure(r.id,err)))
+                Some(Response.Failure(r.id,err))
             }.get
           })
       }
@@ -71,16 +76,16 @@ trait Interface { self =>
       val handler: RequestHandler = {
         case n: Notification if n.method == name =>
           val param = paramDecoder.decodeJson(n.params)
-          param.fold[Future[Option[ResponseMessage]]]({ failure =>
+          param.fold[Option[ResponseMessage]]({ failure =>
             val err = ResponseError(ErrorCodes.InvalidParams, failure.message)
-            Future.successful(Some(Response.Failure(Id.Null, err)))
+            Some(Response.Failure(Id.Null, err))
           }, { param =>
-            Try(body(param)).map(_ => Future.successful(None)).recover[Future[Option[ResponseMessage]]] {
+            Try(body(param)).map(_ => None).recover[Option[ResponseMessage]] {
               case err: ResponseError =>
-                Future.successful(Some(Response.Failure(Id.Null, err)))
+                Some(Response.Failure(Id.Null, err))
               case NonFatal(other) =>
                 val err = ResponseError(ErrorCodes.InternalError, other.getMessage)
-                Future.successful(Some(Response.Failure(Id.Null, err)))
+                Some(Response.Failure(Id.Null, err))
             }.get
           })
       }

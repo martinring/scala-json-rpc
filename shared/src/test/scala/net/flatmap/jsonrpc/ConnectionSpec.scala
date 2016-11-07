@@ -38,14 +38,14 @@ class ConnectionSpec extends FlatSpec with Matchers with ScalaFutures {
 
   "a connection" should "be short-circuitable" in {
     val flow = Connection.bidi(SimpleInterface,SimpleInterface) {
-      remote => new SimpleDependentImpl()(remote)
+      new SimpleDependentImpl()(_)
     }
 
     val connection = flow.join(flow).run()
 
     import connection.remote
 
-    remote.interface.exampleRequest(17).map { x =>
+    SimpleInterface.exampleRequest(17).map { x =>
       connection.close()
       x shouldBe "17"
     }

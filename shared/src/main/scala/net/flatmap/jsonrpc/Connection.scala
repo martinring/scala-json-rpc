@@ -2,6 +2,7 @@ package net.flatmap.jsonrpc
 
 import akka.NotUsed
 import akka.stream._
+import akka.stream.contrib.PartitionWith
 import akka.stream.scaladsl._
 import akka.util.{ByteString, Timeout}
 import net.flatmap.jsonrpc.util._
@@ -38,11 +39,16 @@ object Connection { self =>
     val l = Flow[RequestMessage].zipWithMat(Source.maybe[Local[L]].expand(Iterator.continually(_))) {
       case (msg,local) =>
         local.messageHandler(msg)
-    } (Keep.right).flatMapConcat(Source.fromFuture).collect {
+    } (Keep.right).collect {
       case Some(msg) => msg
     }
 
-    val handler = GraphDSL.create(l, r) { (l,r) =>
+    val partitioner = PartitionWith[Message,RequestMessage,ResponseMessage] {
+      case r: RequestMessage => Left(r)
+      case r: ResponseMessage => Right(r)
+    }
+
+    val handler = GraphDSL.create(l, r, partitioner) { (l,r, _) =>
       val localImpl = impl(r)
       l.success(Some(localImpl))
       new Connection[L,R] {
@@ -50,17 +56,14 @@ object Connection { self =>
         implicit def remote: Remote[R] = r
       }
     } { implicit b =>
-      (local, remote) =>
+      (local, remote, partition) =>
       import GraphDSL.Implicits._
-
-      val partition =
-        b.add(TypePartition[Message,RequestMessage,ResponseMessage])
 
       val merge     =
         b.add(Merge[Message](2,eagerComplete = true))
 
-      partition.out1 ~> local  ~> merge
-      partition.out2 ~> remote ~> merge
+      partition.out0 ~> local  ~> merge
+      partition.out1 ~> remote ~> merge
 
       FlowShape(partition.in, merge.out)
     }

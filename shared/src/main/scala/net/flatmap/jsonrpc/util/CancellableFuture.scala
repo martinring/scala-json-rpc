@@ -1,9 +1,10 @@
 package net.flatmap.jsonrpc.util
 
 import akka.actor.Cancellable
+
 import scala.concurrent.{CanAwait, ExecutionContext, Future, Promise}
 import scala.concurrent.duration.Duration
-import scala.util.Try
+import scala.util.{Success, Try}
 
 
 case class CancellableFuture[+T](future: Future[T], cancellable: Cancellable) extends Future[T] with Cancellable {
