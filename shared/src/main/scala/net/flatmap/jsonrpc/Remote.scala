@@ -18,13 +18,12 @@ class Remote[I <: Interface] private (val interface: I,
                                       sink: ActorRef,
                                       ids: Iterator[Id])
                                      (implicit ec: ExecutionContext) {
-
-  def call[P,R,E](rt: interface.RequestType[P,R,E])(p: P)
-                 (implicit timeout: Timeout): CancellableFuture[R] = {
+  def call[P <: Product,R,E](rt: interface.RequestType[P,R,E])(p: P)
+                        (implicit timeout: Timeout): CancellableFuture[R] = {
     val id = ids.next()
 
     val request = ResponseResolver.DispatchRequest(
-      Request(id,rt.name,rt.paramEncoder(p)),
+      RequestMessage.Request(id,rt.name,rt.paramEncoder(p)),
       timeout
     )
 
@@ -33,21 +32,21 @@ class Remote[I <: Interface] private (val interface: I,
     )
 
     val f = response.flatMap {
-      case Response.Success(_, json) =>
+      case ResponseMessage.Success(_, json) =>
         rt.resultDecoder.decodeJson(json).fold({ failure =>
           val err = ResponseError(ErrorCodes.ParseError, "result could not be parsed")
           Future.failed(err)
         }, Future.successful)
-      case Response.Failure(_, json) =>
+      case ResponseMessage.Failure(_, json) =>
         Future.failed(json)
     }
 
     CancellableFuture(f,response.cancellable)
   }
 
-  def call[P](nt: interface.NotificationType[P])(p: P) = {
+  def call[P](nt: interface.NotificationType[P,_])(p: P) = {
     sink ! ResponseResolver.DispatchNotification(
-      Notification(nt.name,nt.paramEncoder(p))
+      RequestMessage.Notification(nt.name,nt.paramEncoder(p))
     )
   }
 
@@ -58,8 +57,8 @@ class Remote[I <: Interface] private (val interface: I,
 private object ResponseResolver {
   val props = Props(new ResponseResolver)
   case class Cancel(timeout: Timeout)
-  case class DispatchRequest(request: Request, timeout: Timeout)
-  case class DispatchNotification(notification: Notification)
+  case class DispatchRequest(request: RequestMessage.Request, timeout: Timeout)
+  case class DispatchNotification(notification: RequestMessage.Notification)
 }
 
 private class ResponseResolver extends ActorSubscriber with ActorLogging {
@@ -126,7 +125,7 @@ private class ResponseResolver extends ActorSubscriber with ActorLogging {
       pending.get(id).foreach { case (p,c) =>
         log.debug(s"cancelling request '$id'")
         c.cancel()
-        source.offer(Notification("$/cancel",Json.obj("id" -> Codec.encodeId(id))))
+        source.offer(RequestMessage.Notification("$/cancel",Json.obj("id" -> Codec.encodeId(id))))
         context.become(initialized(source, pending - id))
         val error = if (timeout)
           new TimeoutException("the request timed out")
@@ -207,6 +206,8 @@ private class ResponseResolver extends ActorSubscriber with ActorLogging {
 }
 
 object Remote {
+  implicit def exposeInterface[I <: Interface](self: Remote[I]): I = self.interface
+
   def apply[I <: Interface](interface: I, idProvider: Iterator[Id] = Id.standard)
                            (implicit ec: ExecutionContext): Flow[ResponseMessage,RequestMessage,Remote[I]] = {
     val sink = Sink.actorSubscriber(ResponseResolver.props)

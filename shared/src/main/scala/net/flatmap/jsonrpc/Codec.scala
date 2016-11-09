@@ -14,7 +14,7 @@ object Codec {
     Flow[String].map { input =>
       parser.parse(input).fold({ failure =>
         val err = ResponseError(ErrorCodes.ParseError, failure.message, None)
-        Response.Failure(Id.Null,err)
+        ResponseMessage.Failure(Id.Null,err)
       },{ json =>
         Codec.decodeMessage.decodeJson(json).fold[Message]({ e =>
           val err = ResponseError(ErrorCodes.ParseError, e.message, None)
@@ -23,7 +23,7 @@ object Codec {
             id  <- obj("id")
             id  <- decodeId.decodeJson(id).right.toOption
           } yield id
-          Response.Failure(id.getOrElse(Id.Null),err)
+          ResponseMessage.Failure(id.getOrElse(Id.Null),err)
         }, identity)
       })
     }
@@ -45,27 +45,27 @@ object Codec {
     Decoder.decodeNone.map[Id](_ => Id.Null)
 
   implicit val encodeRequest =
-    Encoder.forProduct4("id","method","params","jsonrpc")((r: Request) => (r.id,r.method,r.params,r.jsonrpc))
+    Encoder.forProduct4("id","method","params","jsonrpc")((r: RequestMessage.Request) => (r.id,r.method,r.params,r.jsonrpc))
   implicit val decodeRequest =
-    Decoder.forProduct3("id","method","params")(Request.apply)
+    Decoder.forProduct3("id","method","params")(RequestMessage.Request.apply)
 
   implicit val encodeNotification =
-    Encoder.forProduct3("method","params","jsonrpc")((r: Notification) => (r.method,r.params,r.jsonrpc))
+    Encoder.forProduct3("method","params","jsonrpc")((r: RequestMessage.Notification) => (r.method,r.params,r.jsonrpc))
   implicit val decodeNotification =
-    Decoder.forProduct2("method","params")(Notification.apply)
+    Decoder.forProduct2("method","params")(RequestMessage.Notification.apply)
 
   implicit val encodeRequestMessage = Encoder.instance[RequestMessage] {
-    case r: Request => encodeRequest(r)
-    case n: Notification => encodeNotification(n)
+    case r: RequestMessage.Request => encodeRequest(r)
+    case n: RequestMessage.Notification => encodeNotification(n)
   }
   implicit val decodeRequestMessage: Decoder[RequestMessage] =
     decodeRequest or
     decodeNotification.map[RequestMessage](x => x)
 
   implicit val encodeSuccess =
-    Encoder.forProduct3("id","result","jsonrpc")((r: Response.Success) => (r.id,r.result,r.jsonrpc))
+    Encoder.forProduct3("id","result","jsonrpc")((r: ResponseMessage.Success) => (r.id,r.result,r.jsonrpc))
   implicit val decodeSuccess =
-    Decoder.forProduct2("id","result")(Response.Success.apply)
+    Decoder.forProduct2("id","result")(ResponseMessage.Success.apply)
 
   implicit val encodeResponseError =
     Encoder.forProduct3("code","message","data")((r: ResponseError) => (r.code,r.message,r.data))
@@ -73,13 +73,13 @@ object Codec {
     Decoder.forProduct3("code","message","data")(ResponseError.apply)
 
   implicit val encodeFailure =
-    Encoder.forProduct3("id","error","jsonrpc")((r: Response.Failure) => (r.id,r.error,r.jsonrpc))
+    Encoder.forProduct3("id","error","jsonrpc")((r: ResponseMessage.Failure) => (r.id,r.error,r.jsonrpc))
   implicit val decodeFailure =
-    Decoder.forProduct2("id","error")(Response.Failure.apply)
+    Decoder.forProduct2("id","error")(ResponseMessage.Failure.apply)
 
   implicit val encodeResponseMessage = Encoder.instance[ResponseMessage] {
-    case s: Response.Success => encodeSuccess(s)
-    case f: Response.Failure => encodeFailure(f)
+    case s: ResponseMessage.Success => encodeSuccess(s)
+    case f: ResponseMessage.Failure => encodeFailure(f)
   }
   implicit val decodeResponseMessage =
     decodeSuccess or

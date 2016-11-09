@@ -43,34 +43,39 @@ sealed trait RequestMessage extends Message {
     */
   val method: String
   def prefixed(prefix: String): RequestMessage = this match {
-    case r: Request      => r.copy(method = prefix + method)
-    case n: Notification => n.copy(method = prefix + method)
+    case r: RequestMessage.Request      => r.copy(method = prefix + method)
+    case n: RequestMessage.Notification => n.copy(method = prefix + method)
   }
 }
 
-case class Request(id: Id, method: String, params: Json)
-  extends RequestMessage
+object RequestMessage {
 
-/**
-  * A Notification is a Request object without an "id" member. A Request object
-  * that is a Notification signifies the Client's lack of interest in the
-  * corresponding Response object, and as such no Response object needs to be
-  * returned to the client. The Server MUST NOT reply to a Notification,
-  * including those that are within a batch request.
-  *
-  * Notifications are not confirmable by definition, since they do not have a
-  * Response object to be returned. As such, the Client would not be aware of
-  * any errors (like e.g. "Invalid params","Internal error").
-  * @param method A String containing the name of the method to be invoked.
-  *               Method names that begin with the word rpc followed by a period
-  *               character (U+002E or ASCII 46) are reserved for rpc-internal
-  *               methods and extensions and MUST NOT be used for anything else.
-  * @param params A Structured value that holds the parameter values to be used
-  *               during the invocation of the method. This member MAY be
-  *               omitted.
-  */
-case class Notification(method: String, params: Json)
-  extends RequestMessage
+  case class Request(id: Id, method: String, params: Json)
+    extends RequestMessage
+
+  /**
+    * A Notification is a Request object without an "id" member. A Request object
+    * that is a Notification signifies the Client's lack of interest in the
+    * corresponding Response object, and as such no Response object needs to be
+    * returned to the client. The Server MUST NOT reply to a Notification,
+    * including those that are within a batch request.
+    *
+    * Notifications are not confirmable by definition, since they do not have a
+    * Response object to be returned. As such, the Client would not be aware of
+    * any errors (like e.g. "Invalid params","Internal error").
+    *
+    * @param method A String containing the name of the method to be invoked.
+    *               Method names that begin with the word rpc followed by a period
+    *               character (U+002E or ASCII 46) are reserved for rpc-internal
+    *               methods and extensions and MUST NOT be used for anything else.
+    * @param params A Structured value that holds the parameter values to be used
+    *               during the invocation of the method. This member MAY be
+    *               omitted.
+    */
+  case class Notification(method: String, params: Json)
+    extends RequestMessage
+
+}
 
 sealed trait ResponseMessage extends Message {
   /**
@@ -82,7 +87,7 @@ sealed trait ResponseMessage extends Message {
   val id: Id
 }
 
-object Response {
+object ResponseMessage {
   /**
     * @param id     If there was an error in detecting the id in the Request
     *               object (e.g. Parse error/Invalid Request), it MUST be Null.

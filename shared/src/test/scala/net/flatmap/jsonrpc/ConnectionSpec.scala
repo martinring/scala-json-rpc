@@ -10,17 +10,19 @@ import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.time.{Milliseconds, Span}
 
 import scala.concurrent.{Future, Promise}
+import shapeless._
 
 class SimpleDependentImpl(implicit val remote: Remote[SimpleInterface.type]) extends Local(SimpleInterface) {
   private val promise   = Promise[String]
   val notificationValue = promise.future
+  implicit val requestTimeout = Timeout(1,TimeUnit.SECONDS)
 
   val implementation: Set[interface.MethodImplementation] = Set(
     SimpleInterface.exampleRequest := { i =>
       i.toString
     },
     SimpleInterface.exampleNotification := { i =>
-      SimpleInterface.exampleNotification(i)
+      remote.exampleNotification.applyHList(i.x :: HNil)
     }
   )
 }
@@ -29,7 +31,7 @@ class SimpleDependentImpl(implicit val remote: Remote[SimpleInterface.type]) ext
   * Created by martin on 24.10.16.
   */
 class ConnectionSpec extends FlatSpec with Matchers with ScalaFutures {
-  implicit val system = ActorSystem()
+  implicit val system = ActorSystem("connection_test",testConfig)
   implicit val materializer = ActorMaterializer()
   implicit val dispatcher = system.dispatcher
   implicit val requestTimeout = Timeout(1,TimeUnit.SECONDS)
@@ -45,7 +47,7 @@ class ConnectionSpec extends FlatSpec with Matchers with ScalaFutures {
 
     import connection.remote
 
-    SimpleInterface.exampleRequest(17).map { x =>
+    SimpleInterface.exampleRequest.applyHList(17 :: HNil).map { x =>
       connection.close()
       x shouldBe "17"
     }

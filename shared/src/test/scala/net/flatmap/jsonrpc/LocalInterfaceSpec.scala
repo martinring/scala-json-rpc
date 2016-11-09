@@ -21,16 +21,16 @@ class ExampleImpl extends Local(SimpleInterface) {
 
   val implementation = Set(
     SimpleInterface.exampleRequest := { i =>
-      i.toString
+      i.x.toString
     },
     SimpleInterface.exampleNotification := { s =>
-      promise.trySuccess(s)
+      promise.trySuccess(s.x)
     }
   )
 }
 
 class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
-  implicit val system = ActorSystem("test-system",ConfigFactory.parseString("akka.loglevel = \"INFO\""))
+  implicit val system = ActorSystem("test-system",testConfig)
   implicit val materializer = ActorMaterializer()
   implicit override def executionContext =
     scala.concurrent.ExecutionContext.Implicits.global
@@ -49,7 +49,8 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   "a local interface" should "process request messages" in {
     val local = new ExampleImpl
     val source = Source.single[RequestMessage](
-      Request(Id.Long(0),SimpleInterface.exampleRequest.name,Json.fromInt(42))
+      RequestMessage.Request(Id.Long(0),SimpleInterface.exampleRequest.name,
+        Json.obj("x" -> Json.fromInt(42)))
     )
     val sink = Sink.seq[ResponseMessage]
     val (l,f) =
@@ -57,7 +58,7 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
     f.map { x =>
       x should have length 1
       x shouldBe Seq(
-        Response.Success(Id.Long(0),Json.fromString("42"))
+        ResponseMessage.Success(Id.Long(0),Json.fromString("42"))
       )
     }
   }
@@ -65,7 +66,8 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   it should "process notification messages" in {
     val local = new ExampleImpl
     val source = Source.single[RequestMessage](
-      Notification(SimpleInterface.exampleNotification.name,Json.fromString("boo!"))
+      RequestMessage.Notification(SimpleInterface.exampleNotification.name,
+        Json.obj("x" -> Json.fromString("boo!")))
     )
     val sink = Sink.seq[ResponseMessage]
     source.via(local.flow).to(sink).run()
