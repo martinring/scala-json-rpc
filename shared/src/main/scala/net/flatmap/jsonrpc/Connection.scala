@@ -5,10 +5,10 @@ import akka.stream._
 import akka.stream.contrib.PartitionWith
 import akka.stream.scaladsl._
 import akka.util.{ByteString, Timeout}
-import net.flatmap.jsonrpc.util._
 
 import scala.concurrent.ExecutionContext
-import scala.util.Try
+import scala.util.{Success, Try}
+import scala.util.control.NonFatal
 
 
 trait Connection[L <: Interface,R <: Interface] {
@@ -18,27 +18,19 @@ trait Connection[L <: Interface,R <: Interface] {
 }
 
 object Connection { self =>
-  def bidi[L <: Interface,R <: Interface](local: L, remote: R)(impl: Remote[R] => Local[L],
-    framing: BidiFlow[String,ByteString,ByteString,String,NotUsed] = Framing.byteString,
-    codec: BidiFlow[Message,String,String,Message,NotUsed] = Codec.standard
+  def apply[L <: Interface,R <: Interface](local: L, remote: R)(impl: Remote[R] => Local[L],
+    codec: BidiFlow[Message,ByteString,ByteString,MessageWithBypass,NotUsed] = Codec.standard atop Framing.byteString
   )(implicit ec: ExecutionContext): Flow[ByteString,ByteString,Connection[L,R]] = {
-    /* construct protocol stack
-     *         +------------------------------------+
-     *         | stack                              |
-     *         |                                    |
-     *         |  +-------+            +---------+  |
-     *    ~>   O~~o       |     ~>     |         o~~O    ~>
-     * Message |  | codec |   String   | framing |  | ByteString
-     *    <~   O~~o       |     <~     |         o~~O    <~
-     *         |  +-------+            +---------+  |
-     *         +-----------------------------------*/
-    val stack = codec atop framing
+    bidi(local,remote)(impl,codec)
+  }
 
+  def bidi[L <: Interface,R <: Interface,IO](local: L, remote: R)(impl: Remote[R] => Local[L],
+    codec: BidiFlow[Message,IO,IO,MessageWithBypass,NotUsed]
+  )(implicit ec: ExecutionContext): Flow[IO,IO,Connection[L,R]] = {
     val r = Remote(remote)
 
-    val l = Flow[RequestMessage].zipWithMat(Source.maybe[Local[L]].expand(Iterator.continually(_))) {
-      case (msg,local) =>
-        local.messageHandler(msg)
+    val l = Flow[RequestMessage].zipWithMat(Source.maybe[Local[L]].flatMapConcat(l => Source.repeat(l))) {
+      case (msg,local) => local.messageHandler(msg)
     } (Keep.right).collect {
       case Some(msg) => msg
     }
@@ -48,7 +40,12 @@ object Connection { self =>
       case r: ResponseMessage => Right(r)
     }
 
-    val handler = GraphDSL.create(l, r, partitioner) { (l,r, _) =>
+    val bypassPartitioner = PartitionWith[MessageWithBypass,ResponseMessage.Failure,Message] {
+      case BypassEnvelope(response) => Left(response)
+      case other: Message => Right(other)
+    }
+
+    val handler = GraphDSL.create(l, r, partitioner, bypassPartitioner) { (l,r, _, _) =>
       val localImpl = impl(r)
       l.success(Some(localImpl))
       new Connection[L,R] {
@@ -56,18 +53,18 @@ object Connection { self =>
         implicit def remote: Remote[R] = r
       }
     } { implicit b =>
-      (local, remote, partition) =>
+      (local, remote, partition, bypass) =>
       import GraphDSL.Implicits._
 
-      val merge     =
-        b.add(Merge[Message](2,eagerComplete = true))
+      val merge = b.add(Merge[Message](3))
 
-      partition.out0 ~> local  ~> merge
-      partition.out1 ~> remote ~> merge
+      bypass.out0                ~>                            merge
+      bypass.out1 ~> partition.in; partition.out0 ~> local  ~> merge
+                                   partition.out1 ~> remote ~> merge
 
-      FlowShape(partition.in, merge.out)
+      FlowShape(bypass.in, merge.out)
     }
 
-    stack.reversed.joinMat(handler)(Keep.right)
+    codec.reversed.joinMat(handler)(Keep.right)
   }
 }

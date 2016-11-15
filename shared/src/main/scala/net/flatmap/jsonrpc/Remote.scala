@@ -1,6 +1,7 @@
 package net.flatmap.jsonrpc
 
 import java.util.concurrent.{CancellationException, TimeoutException}
+
 import akka.actor.{ActorLogging, ActorRef, Cancellable, Props}
 import akka.stream.actor._
 import akka.stream._
@@ -12,13 +13,16 @@ import akka.pattern.ask
 import akka.util.Timeout
 import io.circe.Json
 import net.flatmap.jsonrpc.ResponseResolver.DispatchRequest
+
+import scala.language.implicitConversions
 import net.flatmap.jsonrpc.util.CancellableFuture
 
-class Remote[I <: Interface] private (val interface: I,
-                                      sink: ActorRef,
-                                      ids: Iterator[Id])
+class Remote[I <: InterfaceLike] private (val interface: I, sink: ActorRef,
+                                       ids: Iterator[Id])
                                      (implicit ec: ExecutionContext) {
-  def call[P <: Product,R,E](rt: interface.RequestType[P,R,E])(p: P)
+  val remote = this
+
+  private [jsonrpc] def sendRequest[P,R,E](rt: RequestType[_,P,R,E,_])(p: P)
                         (implicit timeout: Timeout): CancellableFuture[R] = {
     val id = ids.next()
 
@@ -32,6 +36,8 @@ class Remote[I <: Interface] private (val interface: I,
     )
 
     val f = response.flatMap {
+      case bypass: BypassEnvelope =>
+        Future.failed(bypass.message.error)
       case ResponseMessage.Success(_, json) =>
         rt.resultDecoder.decodeJson(json).fold({ failure =>
           val err = ResponseError(ErrorCodes.ParseError, "result could not be parsed")
@@ -44,7 +50,7 @@ class Remote[I <: Interface] private (val interface: I,
     CancellableFuture(f,response.cancellable)
   }
 
-  def call[P](nt: interface.NotificationType[P,_])(p: P) = {
+  private [jsonrpc] def sendNotification[P](nt: NotificationType[_,P,_])(p: P) = {
     sink ! ResponseResolver.DispatchNotification(
       RequestMessage.Notification(nt.name,nt.paramEncoder(p))
     )
@@ -206,12 +212,10 @@ private class ResponseResolver extends ActorSubscriber with ActorLogging {
 }
 
 object Remote {
-  implicit def exposeInterface[I <: Interface](self: Remote[I]): I = self.interface
-
-  def apply[I <: Interface](interface: I, idProvider: Iterator[Id] = Id.standard)
-                           (implicit ec: ExecutionContext): Flow[ResponseMessage,RequestMessage,Remote[I]] = {
+  def apply[I <: InterfaceLike](interface: I)(implicit idProvider: Iterator[Id] = Id.standard,
+      ec: ExecutionContext): Flow[ResponseMessage,RequestMessage,Remote[I]] = {
     val sink = Sink.actorSubscriber(ResponseResolver.props)
-    val source = Source.queue[RequestMessage](bufferSize = 16, OverflowStrategy.backpressure)
+    val source = Source.queue[RequestMessage](bufferSize = 1024, OverflowStrategy.backpressure)
     Flow.fromSinkAndSourceMat(sink,source) {
       (sink, source) =>
         sink ! source

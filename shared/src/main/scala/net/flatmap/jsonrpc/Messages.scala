@@ -26,12 +26,15 @@ object Id {
   def standard: Iterator[Id] = discriminated(1,0)
 }
 
-sealed trait Message {
+sealed trait MessageWithBypass
+
+sealed trait Message extends MessageWithBypass {
   /**
     * A String specifying the version of the JSON-RPC protocol. MUST be exactly
     * "2.0".
     */
   val jsonrpc = "2.0"
+  def id: Id
 }
 
 sealed trait RequestMessage extends Message {
@@ -73,11 +76,15 @@ object RequestMessage {
     *               omitted.
     */
   case class Notification(method: String, params: Json)
-    extends RequestMessage
+    extends RequestMessage {
+    def id = Id.Null
+  }
 
 }
 
-sealed trait ResponseMessage extends Message {
+sealed trait ResponseMessageWithBypass extends Message
+
+sealed trait ResponseMessage extends ResponseMessageWithBypass {
   /**
     * This member is REQUIRED.
     * It MUST be the same as the value of the id member in the Request Object.
@@ -101,6 +108,17 @@ object ResponseMessage {
     *           object (e.g. Parse error/Invalid Request), it MUST be Null.
     */
   case class Failure(id: Id, error: ResponseError) extends ResponseMessage
+}
+
+/**
+  * INTERNAL API
+  *
+  * This message is used to bypass message processing for framing or parsing
+  * failures.
+  * @param message The message to pass though
+  */
+case class BypassEnvelope private [jsonrpc] (message: ResponseMessage.Failure) extends MessageWithBypass {
+  val id = message.id
 }
 
 /**

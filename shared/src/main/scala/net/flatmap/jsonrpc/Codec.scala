@@ -4,6 +4,8 @@ import akka.stream.scaladsl.{BidiFlow, Flow}
 import io.circe.Decoder._
 import io.circe._
 
+import scala.util.control.NonFatal
+
 /**
   * Created by martin on 28.09.16.
   */
@@ -14,23 +16,27 @@ object Codec {
     Flow[String].map { input =>
       parser.parse(input).fold({ failure =>
         val err = ResponseError(ErrorCodes.ParseError, failure.message, None)
-        ResponseMessage.Failure(Id.Null,err)
+        BypassEnvelope(ResponseMessage.Failure(Id.Null,err))
       },{ json =>
-        Codec.decodeMessage.decodeJson(json).fold[Message]({ e =>
+        Codec.decodeMessage.decodeJson(json).fold[MessageWithBypass]({ e =>
           val err = ResponseError(ErrorCodes.ParseError, e.message, None)
           val id = for { // try to find a valid id field on the message
             obj <- json.asObject
             id  <- obj("id")
             id  <- decodeId.decodeJson(id).right.toOption
           } yield id
-          ResponseMessage.Failure(id.getOrElse(Id.Null),err)
+          BypassEnvelope(ResponseMessage.Failure(id.getOrElse(Id.Null),err))
         }, identity)
       })
+    }.recover {
+      case NonFatal(t) =>
+        val err = ResponseError(ErrorCodes.InternalError, t.getMessage, None)
+        BypassEnvelope(ResponseMessage.Failure(Id.Null,err)) // TODO...
     }
 
   val encoder = Flow[Message]
     .map(encodeMessage.apply)
-    .map(Printer.noSpaces.pretty)
+    .map(jsonPrinter.pretty)
 
   val standard = BidiFlow.fromFlows(encoder,decoder)
 

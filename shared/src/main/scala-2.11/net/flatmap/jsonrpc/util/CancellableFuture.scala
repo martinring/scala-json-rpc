@@ -29,7 +29,7 @@ object CancellableFuture {
     val c = Promise[Unit]
     val token = new Cancellable {
       def isCancelled: Boolean = c.isCompleted
-      def cancel(): Boolean = c.trySuccess()
+      def cancel(): Boolean = c.trySuccess((): Unit)
     }
     (token,c.future)
   }

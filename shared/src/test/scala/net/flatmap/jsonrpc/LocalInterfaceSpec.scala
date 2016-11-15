@@ -6,7 +6,6 @@ import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl._
 import akka.util.Timeout
-import com.typesafe.config.ConfigFactory
 import io.circe.Json
 import org.scalatest._
 import org.scalatest.concurrent.ScalaFutures
@@ -19,14 +18,18 @@ class ExampleImpl extends Local(SimpleInterface) {
   private val promise = Promise[String]
   val notificationValue = promise.future
 
-  val implementation = Set(
-    SimpleInterface.exampleRequest := { i =>
+  val implementation = Implementation(
+    interface.exampleRequest := { i =>
       i.x.toString
     },
-    SimpleInterface.exampleNotification := { s =>
+    interface.exampleNotification := { s =>
       promise.trySuccess(s.x)
     }
   )
+}
+
+class ExampleImplMissing extends Local(SimpleInterface) {
+  val implementation = Implementation()
 }
 
 class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
@@ -76,40 +79,32 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
     }
   }
 
-  /*
+
   it should "return failure responses for missing implementations" in {
-    val local =
-      Local[ExampleInterfaces.Simple]
+    val local = new ExampleImplMissing
     val source = Source.single[RequestMessage](
-      Request(Id.Long(0),"f",NamedParameters(Map("x" ->
-        Json.fromInt(4))))
+      RequestMessage.Request(Id.Long(0),SimpleInterface.exampleRequest.name,
+        Json.obj("x" -> Json.fromInt(42)))
     )
-    val sink = Sink.seq[Response]
-    val (l,f) =
-      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
-    l.success(Some(new ExampleImplementations.Unimplemented))
-    whenReady(f) { x =>
+    val sink = Sink.seq[ResponseMessage]
+    source.via(local.flow).runWith(sink).map { x =>
       x should have length 1
-      x.head shouldBe a[Response.Failure]
-      x.head.asInstanceOf[Response.Failure].error.code shouldBe ErrorCodes.MethodNotFound
+      x.head shouldBe a [ResponseMessage.Failure]
+      x.head.asInstanceOf[ResponseMessage.Failure].error.code shouldBe ErrorCodes.MethodNotFound
     }
   }
 
   it should "return failure responses for missing parameters" in {
-    val local =
-      Local[ExampleInterfaces.Simple]
+    val local = new ExampleImpl
     val source = Source.single[RequestMessage](
-      Request(Id.Long(0),"f",NamedParameters(Map("y" ->
-        Json.fromInt(4))))
-    )
-    val sink = Sink.seq[Response]
-    val (l,f) =
-      source.viaMat(local)(Keep.right).toMat(sink)(Keep.both).run()
-    l.success(Some(new ExampleImplementations.Unimplemented))
-    whenReady(f) { x =>
+      RequestMessage.Request(Id.Long(0),SimpleInterface.exampleRequest.name,
+        Json.obj()
+    ))
+    val sink = Sink.seq[ResponseMessage]
+    source.via(local.flow).runWith(sink).map { x =>
       x should have length 1
-      x.head shouldBe a[Response.Failure]
-      x.head.asInstanceOf[Response.Failure].error.code shouldBe ErrorCodes.InvalidParams
+      x.head shouldBe a [ResponseMessage.Failure]
+      x.head.asInstanceOf[ResponseMessage.Failure].error.code shouldBe ErrorCodes.InvalidParams
     }
-  }*/
+  }
 }
