@@ -25,8 +25,8 @@ object FramingState {
     case IncompleteHeader(part) =>
       val str = part.decodeString(StandardCharsets.US_ASCII)
       val pos = str.indexOf("\r\n\r\n")
-      if (part.size > 65536 && pos < 0)
-        throw new FramingException("header size above 64k")
+      if (part.size > 4096 && pos < 0)
+        throw new FramingException("header size above 4kb")
       if (pos > -1) {
         val parts = str.take(pos).split("\r\n")
         val contentLength = parts.find(_.startsWith("Content-Length: ")).map { x =>

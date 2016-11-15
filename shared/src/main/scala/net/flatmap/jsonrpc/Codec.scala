@@ -1,157 +1,104 @@
 package net.flatmap.jsonrpc
 
 import akka.stream.scaladsl.{BidiFlow, Flow}
-import cats.data.Xor
 import io.circe.Decoder._
 import io.circe._
+
+import scala.util.control.NonFatal
 
 /**
   * Created by martin on 28.09.16.
   */
 object Codec {
-  val jsonPrinter = Printer.noSpaces.copy(dropNullKeys = true)
+  private val jsonPrinter = Printer.noSpaces
 
-  val parseFailureHandler = Flow[Message].recover {
-    case e: ParsingFailure =>
-      val err = ResponseError(ErrorCodes.ParseError,e.message,None)
-      Response.Failure(Id.Null,err)
-  }
-
-  val decoder = Flow[Json].map {
-    (x: Json) => Codec.decode.decodeJson(x).toTry.get
-  } via parseFailureHandler
+  val decoder =
+    Flow[String].map { input =>
+      parser.parse(input).fold({ failure =>
+        val err = ResponseError(ErrorCodes.ParseError, failure.message, None)
+        BypassEnvelope(ResponseMessage.Failure(Id.Null,err))
+      },{ json =>
+        Codec.decodeMessage.decodeJson(json).fold[MessageWithBypass]({ e =>
+          val err = ResponseError(ErrorCodes.ParseError, e.message, None)
+          val id = for { // try to find a valid id field on the message
+            obj <- json.asObject
+            id  <- obj("id")
+            id  <- decodeId.decodeJson(id).right.toOption
+          } yield id
+          BypassEnvelope(ResponseMessage.Failure(id.getOrElse(Id.Null),err))
+        }, identity)
+      })
+    }.recover {
+      case NonFatal(t) =>
+        val err = ResponseError(ErrorCodes.InternalError, t.getMessage, None)
+        BypassEnvelope(ResponseMessage.Failure(Id.Null,err)) // TODO...
+    }
 
   val encoder = Flow[Message]
-    .map(Codec.encode.apply)
+    .map(encodeMessage.apply)
+    .map(jsonPrinter.pretty)
 
-  val jsonParser = BidiFlow.fromFunctions(
-    outbound = jsonPrinter.pretty,
-    inbound  = (x: String) => parser.parse(x).toTry.get
-  )
+  val standard = BidiFlow.fromFlows(encoder,decoder)
 
-  val codecInterpreter = BidiFlow.fromFlows(encoder,decoder)
-
-  /* codec stack
-   *         +------------------------------------+
-   *         | stack                              |
-   *         |                                    |
-   *         |  +----------+         +---------+  |
-   *    ~>   O~~o          |   ~>    |         o~~O   ~>
-   * Message |  | validate |  Json   |  parse  |  | String
-   *    <~   O~~o          |   <~    |         o~~O   <~
-   *         |  +----------+         +---------+  |
-   *         +------------------------------------+
-   */
-  val standard = codecInterpreter atop jsonParser
-
-  implicit val idEncoder = new Encoder[Id] {
-    def apply(a: Id): Json = a match {
-      case Id.Null => Json.Null
-      case Id.Long(i) => Json.fromLong(i)
-      case Id.String(s) => Json.fromString(s)
-    }
+  implicit val encodeId = Encoder.instance[Id] {
+    case Id.Null => Json.Null
+    case Id.Long(i) => Json.fromLong(i)
+    case Id.String(s) => Json.fromString(s)
   }
+  implicit val decodeId: Decoder[Id] =
+    Decoder.decodeLong.map[Id](Id.Long) or
+    Decoder.decodeString.map[Id](Id.String) or
+    Decoder.decodeNone.map[Id](_ => Id.Null)
 
-  implicit val parameterListEncoder = new Encoder[ParameterList] {
-    override def apply(a: ParameterList): Json = a match {
-      case NoParameters => Json.Null
-      case NamedParameters(params) => Json.obj(params.toSeq :_*)
-      case PositionedParameters(params) => Json.arr(params :_*)
-    }
+  implicit val encodeRequest =
+    Encoder.forProduct4("id","method","params","jsonrpc")((r: RequestMessage.Request) => (r.id,r.method,r.params,r.jsonrpc))
+  implicit val decodeRequest =
+    Decoder.forProduct3("id","method","params")(RequestMessage.Request.apply)
+
+  implicit val encodeNotification =
+    Encoder.forProduct3("method","params","jsonrpc")((r: RequestMessage.Notification) => (r.method,r.params,r.jsonrpc))
+  implicit val decodeNotification =
+    Decoder.forProduct2("method","params")(RequestMessage.Notification.apply)
+
+  implicit val encodeRequestMessage = Encoder.instance[RequestMessage] {
+    case r: RequestMessage.Request => encodeRequest(r)
+    case n: RequestMessage.Notification => encodeNotification(n)
   }
+  implicit val decodeRequestMessage: Decoder[RequestMessage] =
+    decodeRequest or
+    decodeNotification.map[RequestMessage](x => x)
 
-  implicit val requestEncoder =
-    Encoder.forProduct4("id","method","params","jsonrpc")((r: Request) => (r.id,r.method,r.params,r.jsonrpc))
+  implicit val encodeSuccess =
+    Encoder.forProduct3("id","result","jsonrpc")((r: ResponseMessage.Success) => (r.id,r.result,r.jsonrpc))
+  implicit val decodeSuccess =
+    Decoder.forProduct2("id","result")(ResponseMessage.Success.apply)
 
-  implicit val notificationEncoder =
-    Encoder.forProduct3("method","params","jsonrpc")((r: Notification) => (r.method,r.params,r.jsonrpc))
-
-  implicit val requestMessageEncoder = new Encoder[RequestMessage] {
-    override def apply(a: RequestMessage): Json = a match {
-      case r: Request => requestEncoder(r)
-      case n: Notification => notificationEncoder(n)
-      case r: ResolveableRequest => sys.error("Resolvable Requests are not serializable")
-    }
-  }
-
-  implicit val successEncoder =
-    Encoder.forProduct3("id","result","jsonrpc")((r: Response.Success) => (r.id,r.result,r.jsonrpc))
-
-  implicit val responseErrorEncoder =
+  implicit val encodeResponseError =
     Encoder.forProduct3("code","message","data")((r: ResponseError) => (r.code,r.message,r.data))
-
-  implicit val failureEncoder =
-    Encoder.forProduct3("id","error","jsonrpc")((r: Response.Failure) => (r.id,r.error,r.jsonrpc))
-
-  implicit val responseEncoder = new Encoder[Response] {
-    override def apply(a: Response): Json = a match {
-      case s: Response.Success => successEncoder(s)
-      case f: Response.Failure => failureEncoder(f)
-    }
-  }
-
-  implicit val encode = new Encoder[Message] {
-    override def apply(a: Message): Json = a match {
-      case a: Response => responseEncoder(a)
-      case x: RequestMessage => requestMessageEncoder(x)
-    }
-  }
-
-  implicit val idDecoder: Decoder[Id] = new Decoder[Id] {
-    override def apply(c: HCursor): Result[Id] =
-      c.as[Long].map(Id.Long) orElse c.as[String].map(Id.String)
-  }
-
-  private[this] final val rightNoParams: Xor[DecodingFailure,ParameterList] =
-    Xor.right(NoParameters)
-
-  implicit val parameterListDecoder: Decoder[ParameterList] =
-    Decoder.withReattempt(c => if(c.succeeded) {
-      if (c.any.focus.isNull) rightNoParams else {
-        c.any.as[Map[String,Json]].map(NamedParameters) orElse
-        c.any.as[IndexedSeq[Json]].map(PositionedParameters)
-      }
-    } else if (!c.history.takeWhile(_.failed).exists(_.incorrectFocus)) rightNoParams else {
-      Xor.left(DecodingFailure("[A]ParameterList[A]", c.history))
-    })
-
-  implicit val requestDecoder =
-    Decoder.forProduct3("id","method","params")(Request.apply)
-
-  implicit val notificationDecoder =
-    Decoder.forProduct2("method","params")(Notification.apply)
-
-  implicit val requestMessageDecoder: Decoder[RequestMessage] = new Decoder[RequestMessage] {
-    override def apply(c: HCursor): Result[RequestMessage] = {
-      val r = for (fields <- c.fieldSet if fields.contains("id")) yield
-        c.as[Request].map(x => x)
-      r.getOrElse(c.as[Notification].map(x => x))
-    }
-  }
-
-  implicit val successDecoder =
-    Decoder.forProduct2("id","result")(Response.Success.apply)
-
-  implicit val responseErrorDecoder =
+  implicit val decodeResponseError =
     Decoder.forProduct3("code","message","data")(ResponseError.apply)
 
-  implicit val failureDecoder =
-    Decoder.forProduct2("id","error")(Response.Failure.apply)
+  implicit val encodeFailure =
+    Encoder.forProduct3("id","error","jsonrpc")((r: ResponseMessage.Failure) => (r.id,r.error,r.jsonrpc))
+  implicit val decodeFailure =
+    Decoder.forProduct2("id","error")(ResponseMessage.Failure.apply)
 
-  implicit val responseDecoder = new Decoder[Response] {
-    override def apply(c: HCursor): Result[Response] = {
-      val r = for (fields <- c.fieldSet if !fields.contains("error")) yield
-        c.as[Response.Success].map(x => x)
-      r.getOrElse(c.as[Response.Failure].map(x => x))
-    }
+  implicit val encodeResponseMessage = Encoder.instance[ResponseMessage] {
+    case s: ResponseMessage.Success => encodeSuccess(s)
+    case f: ResponseMessage.Failure => encodeFailure(f)
   }
+  implicit val decodeResponseMessage =
+    decodeSuccess or
+    decodeFailure.map[ResponseMessage](x => x)
 
+  def validateJsonRPC(hCursor: HCursor): Boolean =
+    hCursor.get[String]("jsonrpc").right.exists(_ == "2.0")
 
-  implicit val decode: Decoder[Message] = new Decoder[Message] {
-    override def apply(c: HCursor): Result[Message] = {
-      val r = for (fields <- c.fieldSet if fields.contains("method")) yield
-        c.as[RequestMessage].map(x => x)
-      r.getOrElse(c.as[Response].map(x => x))
-    }
+  implicit val encodeMessage = Encoder.instance[Message] {
+    case a: ResponseMessage => encodeResponseMessage(a)
+    case x: RequestMessage => encodeRequestMessage(x)
   }
+  implicit val decodeMessage: Decoder[Message] =
+    (decodeRequestMessage or decodeResponseMessage.map[Message](x => x))
+      .validate(validateJsonRPC,"message is not declared as jsonrpc 2.0")
 }

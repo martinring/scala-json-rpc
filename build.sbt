@@ -1,9 +1,11 @@
 import org.scalajs.sbtplugin.cross.CrossProject
 import sbt.Keys._
 
+scalaVersion in ThisBuild := "2.12.0"
+
 val versions = new {
-  val circe = "0.5.4"
-  val akka = "2.4.11"
+  val circe = "0.6.0"
+  val akka = "2.4.12"
   val scalatest = "3.0.0"
   val scala = "2.11.8"
 }
@@ -13,8 +15,6 @@ lazy val root = project.in(file("."))
   .settings(
     scalaVersion := versions.scala,
     publish := {},
-    test := Def.sequential(test in libJVM, test in libJS),
-    run := {},
     publishLocal := {}
   )
 
@@ -23,34 +23,24 @@ lazy val lib: CrossProject = crossProject.in(file("."))
     bintrayOrganization := Some("flatmap"),
     licenses += ("MIT", url("http://opensource.org/licenses/MIT")),
     name := "jsonrpc",
-    version := "0.4.0",
+    version := "0.6.0-SNAPSHOT",
     sourceDirectories in Test := Seq.empty,
-    scalaVersion := "2.11.8",
+    scalaVersion := versions.scala,
+    scalacOptions ++= Seq("-deprecation","-feature"),
     organization := "net.flatmap",
     libraryDependencies ++= Seq(
       "io.circe" %%% "circe-core",
       "io.circe" %%% "circe-generic",
       "io.circe" %%% "circe-parser"
-    ).map(_ % versions.circe)
+    ).map(_ % versions.circe),
+    libraryDependencies += "org.scalatest" %%% "scalatest" % versions.scalatest % "test"
   ).jsSettings(
-    test := test in testJS,
-    libraryDependencies += "eu.unicredit" %%% "akkajsactorstream" %
-      ("0." + versions.akka)
+    crossScalaVersions := Seq("2.11.8"),
+    libraryDependencies += "eu.unicredit" %%% "akkajsactorstream" % ("0." + versions.akka)
   ).jvmSettings(
-    test := test in testJVM,
+    crossScalaVersions := Seq("2.11.8","2.12.0"),
     libraryDependencies += "com.typesafe.akka" %% "akka-stream" % versions.akka
   )
 
 lazy val libJS = lib.js
 lazy val libJVM = lib.jvm
-
-lazy val macroTest = crossProject.in(file("."))
-  .settings(
-    scalaVersion := "2.11.8",
-    target := target.value / "test",
-    libraryDependencies += "org.scalatest" %%% "scalatest" %
-      versions.scalatest % "test"
-  ).dependsOn(lib)
-
-lazy val testJS  = macroTest.js
-lazy val testJVM = macroTest.jvm

@@ -1,70 +1,70 @@
 package net.flatmap.jsonrpc
 
-import akka.{Done, NotUsed}
+import akka.NotUsed
 import akka.stream._
+import akka.stream.contrib.PartitionWith
 import akka.stream.scaladsl._
-import akka.util.ByteString
-import io.circe._
-import net.flatmap.jsonrpc.util._
+import akka.util.{ByteString, Timeout}
 
-import scala.concurrent.Promise
-import scala.util.Try
+import scala.concurrent.ExecutionContext
+import scala.util.{Success, Try}
+import scala.util.control.NonFatal
 
-trait Connection[L,R] {
-  def local: L
-  def remote: R
-  def close()
+
+trait Connection[L <: Interface,R <: Interface] {
+  implicit def local: Local[L]
+  implicit def remote: Remote[R]
+  def close()(implicit timeout: Timeout) = remote.close()
 }
 
 object Connection { self =>
-  def bidi[L,R <: RemoteConnection](local: Flow[RequestMessage,Response,Promise[Option[L]]],
-                remote: Flow[Response,RequestMessage,R],
-                impl: R => L,
-                framing: BidiFlow[String,ByteString,ByteString,String,NotUsed] = Framing.byteString,
-                codec: BidiFlow[Message,String,String,Message,NotUsed] = Codec.standard
-  ): Flow[ByteString,ByteString,Connection[L,R]] = {
-    /* construct protocol stack
-     *         +------------------------------------+
-     *         | stack                              |
-     *         |                                    |
-     *         |  +-------+            +---------+  |
-     *    ~>   O~~o       |     ~>     |         o~~O    ~>
-     * Message |  | codec |   String   | framing |  | ByteString
-     *    <~   O~~o       |     <~     |         o~~O    <~
-     *         |  +-------+            +---------+  |
-     *         +-----------------------------------*/
-    val stack = codec atop framing
+  def apply[L <: Interface,R <: Interface](local: L, remote: R)(impl: Remote[R] => Local[L],
+    codec: BidiFlow[Message,ByteString,ByteString,MessageWithBypass,NotUsed] = Codec.standard atop Framing.byteString
+  )(implicit ec: ExecutionContext): Flow[ByteString,ByteString,Connection[L,R]] = {
+    bidi(local,remote)(impl,codec)
+  }
 
-    val end = Source.maybe[Nothing]
+  def bidi[L <: Interface,R <: Interface,IO](local: L, remote: R)(impl: Remote[R] => Local[L],
+    codec: BidiFlow[Message,IO,IO,MessageWithBypass,NotUsed]
+  )(implicit ec: ExecutionContext): Flow[IO,IO,Connection[L,R]] = {
+    val r = Remote(remote)
 
-    val handler = GraphDSL.create(local, remote, end) { (l,r,end) =>
-      val localImpl = impl(r)
-      l.tryComplete(Try(Some(localImpl)))
-      new Connection[L,R] {
-        def local: L  = localImpl
-        def remote: R = r
-        def close() = {
-          r.close()
-          end.trySuccess(None)
-        }
-      }
-    } { implicit b =>
-      (local, remote, end) =>
-      import GraphDSL.Implicits._
-
-      val partition =
-        b.add(TypePartition[Message,RequestMessage,Response])
-
-      val merge     =
-        b.add(Merge[Message](3,eagerComplete = true))
-
-      partition.out1 ~> local  ~> merge
-      partition.out2 ~> remote ~> merge
-                           end ~> merge
-
-      FlowShape(partition.in, merge.out)
+    val l = Flow[RequestMessage].zipWithMat(Source.maybe[Local[L]].flatMapConcat(l => Source.repeat(l))) {
+      case (msg,local) => local.messageHandler(msg)
+    } (Keep.right).collect {
+      case Some(msg) => msg
     }
 
-    stack.reversed.joinMat(handler)(Keep.right)
+    val partitioner = PartitionWith[Message,RequestMessage,ResponseMessage] {
+      case r: RequestMessage => Left(r)
+      case r: ResponseMessage => Right(r)
+    }
+
+    val bypassPartitioner = PartitionWith[MessageWithBypass,ResponseMessage.Failure,Message] {
+      case BypassEnvelope(response) => Left(response)
+      case other: Message => Right(other)
+    }
+
+    val handler = GraphDSL.create(l, r, partitioner, bypassPartitioner) { (l,r, _, _) =>
+      val localImpl = impl(r)
+      l.success(Some(localImpl))
+      new Connection[L,R] {
+        implicit def local: Local[L] = localImpl
+        implicit def remote: Remote[R] = r
+      }
+    } { implicit b =>
+      (local, remote, partition, bypass) =>
+      import GraphDSL.Implicits._
+
+      val merge = b.add(Merge[Message](3))
+
+      bypass.out0                ~>                            merge
+      bypass.out1 ~> partition.in; partition.out0 ~> local  ~> merge
+                                   partition.out1 ~> remote ~> merge
+
+      FlowShape(bypass.in, merge.out)
+    }
+
+    codec.reversed.joinMat(handler)(Keep.right)
   }
 }

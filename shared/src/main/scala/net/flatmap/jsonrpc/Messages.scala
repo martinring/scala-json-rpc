@@ -26,28 +26,15 @@ object Id {
   def standard: Iterator[Id] = discriminated(1,0)
 }
 
-sealed trait Message {
+sealed trait MessageWithBypass
+
+sealed trait Message extends MessageWithBypass {
   /**
     * A String specifying the version of the JSON-RPC protocol. MUST be exactly
     * "2.0".
     */
   val jsonrpc = "2.0"
-}
-
-sealed trait ParameterList {
-  def json: Json
-}
-case object NoParameters extends ParameterList {
-  def json = Json.obj()
-}
-case class PositionedParameters(val params: IndexedSeq[Json]) extends ParameterList {
-  require(params.nonEmpty)
-  def json = sys.error("Positioned Parameters cannot be interpreted as JSON Object")
-}
-case class NamedParameters(val params: Map[String,Json]) extends ParameterList {
-  require(params.nonEmpty)
-  def json = Json.obj(params.toSeq :_*)
-
+  def id: Id
 }
 
 sealed trait RequestMessage extends Message {
@@ -59,39 +46,45 @@ sealed trait RequestMessage extends Message {
     */
   val method: String
   def prefixed(prefix: String): RequestMessage = this match {
-    case r: ResolveableRequest => r.copy(method = prefix + method)
-    case r: Request      => r.copy(method = prefix + method)
-    case n: Notification => n.copy(method = prefix + method)
+    case r: RequestMessage.Request      => r.copy(method = prefix + method)
+    case n: RequestMessage.Notification => n.copy(method = prefix + method)
   }
 }
 
-case class Request(id: Id, method: String, params: ParameterList)
-  extends RequestMessage
+object RequestMessage {
 
-private [jsonrpc] case class ResolveableRequest(method: String, params: ParameterList, promise: Promise[Json], id: Option[Id] = None) extends RequestMessage
+  case class Request(id: Id, method: String, params: Json)
+    extends RequestMessage
 
-/**
-  * A Notification is a Request object without an "id" member. A Request object
-  * that is a Notification signifies the Client's lack of interest in the
-  * corresponding Response object, and as such no Response object needs to be
-  * returned to the client. The Server MUST NOT reply to a Notification,
-  * including those that are within a batch request.
-  *
-  * Notifications are not confirmable by definition, since they do not have a
-  * Response object to be returned. As such, the Client would not be aware of
-  * any errors (like e.g. "Invalid params","Internal error").
-  * @param method A String containing the name of the method to be invoked.
-  *               Method names that begin with the word rpc followed by a period
-  *               character (U+002E or ASCII 46) are reserved for rpc-internal
-  *               methods and extensions and MUST NOT be used for anything else.
-  * @param params A Structured value that holds the parameter values to be used
-  *               during the invocation of the method. This member MAY be
-  *               omitted.
-  */
-case class Notification(method: String, params: ParameterList)
-  extends RequestMessage
+  /**
+    * A Notification is a Request object without an "id" member. A Request object
+    * that is a Notification signifies the Client's lack of interest in the
+    * corresponding Response object, and as such no Response object needs to be
+    * returned to the client. The Server MUST NOT reply to a Notification,
+    * including those that are within a batch request.
+    *
+    * Notifications are not confirmable by definition, since they do not have a
+    * Response object to be returned. As such, the Client would not be aware of
+    * any errors (like e.g. "Invalid params","Internal error").
+    *
+    * @param method A String containing the name of the method to be invoked.
+    *               Method names that begin with the word rpc followed by a period
+    *               character (U+002E or ASCII 46) are reserved for rpc-internal
+    *               methods and extensions and MUST NOT be used for anything else.
+    * @param params A Structured value that holds the parameter values to be used
+    *               during the invocation of the method. This member MAY be
+    *               omitted.
+    */
+  case class Notification(method: String, params: Json)
+    extends RequestMessage {
+    def id = Id.Null
+  }
 
-sealed trait Response extends Message {
+}
+
+sealed trait ResponseMessageWithBypass extends Message
+
+sealed trait ResponseMessage extends ResponseMessageWithBypass {
   /**
     * This member is REQUIRED.
     * It MUST be the same as the value of the id member in the Request Object.
@@ -101,22 +94,31 @@ sealed trait Response extends Message {
   val id: Id
 }
 
-object Response {
-
+object ResponseMessage {
   /**
     * @param id     If there was an error in detecting the id in the Request
     *               object (e.g. Parse error/Invalid Request), it MUST be Null.
     * @param result The value of this member is determined by the method invoked
     *               on the Server.
     */
-  case class Success(id: Id, result: Json) extends Response
+  case class Success(id: Id, result: Json) extends ResponseMessage
 
   /**
     * @param id If there was an error in detecting the id in the Request
     *           object (e.g. Parse error/Invalid Request), it MUST be Null.
     */
-  case class Failure(id: Id, error: ResponseError) extends Response
+  case class Failure(id: Id, error: ResponseError) extends ResponseMessage
+}
 
+/**
+  * INTERNAL API
+  *
+  * This message is used to bypass message processing for framing or parsing
+  * failures.
+  * @param message The message to pass though
+  */
+case class BypassEnvelope private [jsonrpc] (message: ResponseMessage.Failure) extends MessageWithBypass {
+  val id = message.id
 }
 
 /**
