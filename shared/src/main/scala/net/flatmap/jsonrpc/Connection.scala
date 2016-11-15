@@ -5,26 +5,26 @@ import akka.stream._
 import akka.stream.contrib.PartitionWith
 import akka.stream.scaladsl._
 import akka.util.{ByteString, Timeout}
+import shapeless._
+import shapeless.LUBConstraint._
 
 import scala.concurrent.ExecutionContext
-import scala.util.{Success, Try}
-import scala.util.control.NonFatal
 
 
-trait Connection[L <: Interface,R <: Interface] {
+abstract class Connection[L <: HList : <<:[MethodType]#λ : IsDistinctConstraint, R <: HList : <<:[MethodType]#λ : IsDistinctConstraint] {
   implicit def local: Local[L]
   implicit def remote: Remote[R]
   def close()(implicit timeout: Timeout) = remote.close()
 }
 
 object Connection { self =>
-  def apply[L <: Interface,R <: Interface](local: L, remote: R)(impl: Remote[R] => Local[L],
+  def apply[L <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint,R <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint](local: Interface[L], remote: Interface[R])(impl: Remote[R] => Local[L],
     codec: BidiFlow[Message,ByteString,ByteString,MessageWithBypass,NotUsed] = Codec.standard atop Framing.byteString
   )(implicit ec: ExecutionContext): Flow[ByteString,ByteString,Connection[L,R]] = {
     bidi(local,remote)(impl,codec)
   }
 
-  def bidi[L <: Interface,R <: Interface,IO](local: L, remote: R)(impl: Remote[R] => Local[L],
+  def bidi[L <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint,R <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint,IO](local: Interface[L], remote: Interface[R])(impl: Remote[R] => Local[L],
     codec: BidiFlow[Message,IO,IO,MessageWithBypass,NotUsed]
   )(implicit ec: ExecutionContext): Flow[IO,IO,Connection[L,R]] = {
     val r = Remote(remote)

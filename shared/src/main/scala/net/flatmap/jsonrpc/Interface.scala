@@ -3,89 +3,95 @@ package net.flatmap.jsonrpc
 import akka.util.Timeout
 import io.circe.{Decoder, Encoder}
 import net.flatmap.jsonrpc.util.CancellableFuture
+import shapeless._
 
-sealed trait MethodType[I <: Interface] {
+import scala.util.Try
+import scala.util.control.NonFatal
+
+sealed trait MethodType {
   val name: String
-  private [jsonrpc] def copyTo[I2 <: Interface]: MethodType[I2]
 }
 
-class RequestType[PI,PO,R,E,I <: Interface] private [jsonrpc] (val name: String)(
-  implicit val paramEncoder: Encoder[PO], val paramDecoder: Decoder[PI],
+abstract class RequestType[P,R,E] private [jsonrpc] (val name: String)(
+  implicit val paramEncoder: Encoder[P], val paramDecoder: Decoder[P],
   val resultEncoder: Encoder[R], val resultDecoder: Decoder[R],
-  val errorEncoder: Encoder[E], val errorDecoder: Decoder[E]) extends MethodType[I] {
+  val errorEncoder: Encoder[E], val errorDecoder: Decoder[E]) extends MethodType {
 
-  def apply(p: PO)(implicit remote: Remote[I], timeout: Timeout): CancellableFuture[R] =
-    remote.sendRequest[PO,R,E](this)(p)
+  type Param = P
+  type Result = R
+  type Error = E
 
-  def contramapParameter[P2](contramap: P2 => PO) =
-    new RequestType[PI,P2,R,E,I](name)(paramEncoder.contramap(contramap),paramDecoder,
-      resultEncoder,resultDecoder,errorEncoder,errorDecoder)
+  def apply[MS <: HList](p: P)(implicit remote: Remote[MS], evidence: BasisConstraint[this.type :: HNil,MS], timeout: Timeout): CancellableFuture[R] =
+    remote.sendRequest[P,R,E](this)(p)
 
-  def mapParameter[P2](map: PI => P2) =
-    new RequestType[P2,PO,R,E,I](name)(paramEncoder,paramDecoder.map(map),
-      resultEncoder,resultDecoder,errorEncoder,errorDecoder)
-
-  private [jsonrpc] def copyTo[I2 <: Interface] = new RequestType[PI,PO,R,E,I2](name)
-}
-
-class NotificationType[PI,PO,I <: Interface] private [jsonrpc] (val name: String)(
-  implicit val paramEncoder: Encoder[PO],
-  val paramDecoder: Decoder[PI]) extends MethodType[I] {
-
-  def apply(p: PO)(implicit remote: Remote[I]): Unit =
-    remote.sendNotification[PO](this)(p)
-
-  def contramapParameter[P2](contramap: P2 => PO) =
-    new NotificationType[PI,P2,I](name)(paramEncoder.contramap(contramap),paramDecoder)
-
-  def mapParameter[P2](map: PI => P2) =
-    new NotificationType[P2,PO,I](name)(paramEncoder,paramDecoder.map(map))
-
-  private [jsonrpc] def copyTo[I2 <: Interface] = new NotificationType[PI,PO,I2](name)
-}
-
-sealed trait InterfaceLike {
-  def methods: Set[MethodType[_]]
-}
-
-trait Interface extends InterfaceLike {
-  private var methods_ = Set.empty[MethodType[_]]
-  def methods = methods_
-
-  protected def request[P,R,E](name: String)(implicit paramEncoder: Encoder[P], paramDecoder: Decoder[P],
-    resultEncoder: Encoder[R], resultDecoder: Decoder[R],
-    errorEncoder: Encoder[E], errorDecoder: Decoder[E]): RequestType[P,P,R,E,this.type] = {
-    val method = new RequestType[P,P,R,E,this.type](name)
-    methods_ += method
-    method
+  def := (body: P => R): RequestImplementation[P,R,E,this.type] = {
+    val handler: Local.RequestHandler = {
+      case r: RequestMessage.Request if r.method == this.name =>
+        val param = this.paramDecoder.decodeJson(r.params)
+        param.fold({ failure =>
+          val err = ResponseError(ErrorCodes.InvalidParams, failure.message)
+          Some(ResponseMessage.Failure(r.id,err))
+        }, { param =>
+          Try(body(param)).map[Option[ResponseMessage]] { result =>
+            Some(ResponseMessage.Success(r.id,this.resultEncoder(result)))
+          } .recover[Option[ResponseMessage]] {
+            case err: ResponseError =>
+              Some(ResponseMessage.Failure(r.id,err))
+            case NonFatal(other) =>
+              val err = ResponseError(ErrorCodes.InternalError,other.getMessage)
+              Some(ResponseMessage.Failure(r.id,err))
+          }.get
+        })
+    }
+    new RequestImplementation[P,R,E,this.type](this, handler)
   }
+}
 
-  protected def notification[P](name: String)(
-    implicit paramEncoder: Encoder[P],
-    paramDecoder: Decoder[P]): NotificationType[P,P,this.type]  = {
-    val method = new NotificationType[P,P,this.type](name)
-    methods_ += method
-    method
+abstract class NotificationType[P] private [jsonrpc] (val name: String)(
+  implicit val paramEncoder: Encoder[P],
+  val paramDecoder: Decoder[P]) extends MethodType {
+
+  def apply[MS <: HList](p: P)(implicit remote: Remote[MS], evidence: BasisConstraint[this.type :: HNil,MS], timeout: Timeout): Unit =
+    remote.remote.sendNotification[P](this)(p)
+
+  def := (body: P => Unit): NotificationImplementation[P,this.type] = {
+    val handler: Local.RequestHandler = {
+      case n: RequestMessage.Notification if n.method == this.name =>
+        val param = this.paramDecoder.decodeJson(n.params)
+        param.fold[Option[ResponseMessage]]({ failure =>
+          val err = ResponseError(ErrorCodes.InvalidParams, failure.message)
+          Some(ResponseMessage.Failure(Id.Null, err))
+        }, { param =>
+          Try(body(param)).map(_ => None).recover[Option[ResponseMessage]] {
+            case err: ResponseError =>
+              Some(ResponseMessage.Failure(Id.Null, err))
+            case NonFatal(other) =>
+              val err = ResponseError(ErrorCodes.InternalError, other.getMessage)
+              Some(ResponseMessage.Failure(Id.Null, err))
+          }.get
+        })
+    }
+    new NotificationImplementation[P,this.type](this, handler)
   }
 }
 
 import shapeless._
 import shapeless.ops.hlist._
 
-class CombinedInterface[IS <: HList : LUBConstraint.<<:[Interface]#λ : IsDistinctConstraint](val interfaces: IS)
-  (implicit toTraversable: ToTraversable.Aux[IS,List,Interface]) extends InterfaceLike {
+class Interface[MS <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint](val methods: MS)
+  (implicit val toTraversable: ToTraversable.Aux[MS,List,MethodType]) {
 
-  override def methods = interfaces.toList[Interface].toSet.flatMap((i: Interface) => i.methods)
+  type Shape = MS
 
-  def and [T <: Interface](other: T)(
-    implicit toTraversable: ToTraversable.Aux[T :: IS,List,Interface],
-    distinct: IsDistinctConstraint[T :: IS]): CombinedInterface[T :: IS] = other match {
+  def and [T <: MethodType](other: T)(
+    implicit toTraversable: ToTraversable.Aux[T :: MS,List,MethodType],
+    distinct: IsDistinctConstraint[T :: MS]): Interface[T :: MS] = other match {
     case other =>
-      new CombinedInterface[T :: IS](other :: interfaces)
+      new Interface[T :: MS](other :: methods)
   }
 }
 
-object CombinedInterface {
-  def apply[A <: Interface](interface: A) =
-    new CombinedInterface[A :: HNil](interface :: HNil)
+object Interface {
+  def apply[A <: MethodType](method: A) =
+    new Interface[A :: HNil](method :: HNil)
 }

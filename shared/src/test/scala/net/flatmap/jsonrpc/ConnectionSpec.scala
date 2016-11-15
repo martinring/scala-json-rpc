@@ -15,22 +15,18 @@ import org.scalatest.time.{Milliseconds, Span}
 import scala.collection.immutable
 import scala.concurrent.{Future, Promise}
 
-class SimpleDependentImpl(implicit val remote: Remote[SimpleInterface.type]) extends Local(SimpleInterface) {
+class SimpleDependentImpl(implicit val remote: Remote[SimpleInterface.Interface.Shape]) extends Local(SimpleInterface.Interface) {
   private val promise   = Promise[String]
   val notificationValue = promise.future
   implicit val requestTimeout = Timeout(1,TimeUnit.SECONDS)
 
-  import SimpleInterface._
-
-  val implementation = Implementation(
-    exampleRequest := { i =>
+  val implementation =
+    SimpleInterface.ExampleRequest.:=({ i =>
       if (i.x < 0) sys.error("some error")
       i.x.toString
-    },
-    exampleNotification := { i =>
-      exampleNotification("foo")
-    }
-  )
+    }) and SimpleInterface.ExampleNotification.:=({ i =>
+      SimpleInterface.ExampleNotification(ExampleNotificationParams("foo"))
+    })
 }
 
 /**
@@ -43,7 +39,7 @@ class ConnectionSpec extends AsyncFlatSpec with Matchers {
   implicit val requestTimeout = Timeout(1,TimeUnit.SECONDS)
 
   "a connection" should "be short-circuitable" in {
-    val flow = Connection(SimpleInterface,SimpleInterface) {
+    val flow = Connection(SimpleInterface.Interface,SimpleInterface.Interface) {
       new SimpleDependentImpl()(_)
     }
 
@@ -51,14 +47,14 @@ class ConnectionSpec extends AsyncFlatSpec with Matchers {
 
     import connection.remote
 
-    SimpleInterface.exampleRequest(17).map { x =>
+    SimpleInterface.ExampleRequest(ExampleRequestParams(17)).map { x =>
       connection.close()
       x shouldBe "17"
     }
   }
 
   it should "survive failures" in {
-    val flow = Connection.bidi(SimpleInterface,SimpleInterface)(
+    val flow = Connection.bidi(SimpleInterface.Interface,SimpleInterface.Interface)(
       new SimpleDependentImpl()(_),BidiFlow.fromFlows(Flow[Message],Flow[Message]))
 
     val messages = immutable.Iterable(
@@ -84,7 +80,7 @@ class ConnectionSpec extends AsyncFlatSpec with Matchers {
   }
 
   it should "survive parser failures" in {
-    val flow = Connection(SimpleInterface,SimpleInterface)(new SimpleDependentImpl()(_))
+    val flow = Connection(SimpleInterface.Interface,SimpleInterface.Interface)(new SimpleDependentImpl()(_))
     val okMessage = Codec.encodeRequest(
       RequestMessage.Request(Id.Long(0), "example/request", Json.obj("x" -> Json.fromInt(4)))
     ).noSpaces
@@ -104,7 +100,7 @@ class ConnectionSpec extends AsyncFlatSpec with Matchers {
   }
 
   it should "stay opened" in {
-    val flow = Connection.bidi(SimpleInterface,SimpleInterface)(
+    val flow = Connection.bidi(SimpleInterface.Interface,SimpleInterface.Interface)(
       new SimpleDependentImpl()(_),BidiFlow.fromFlows(Flow[Message],Flow[Message]))
 
     val source = Source.queue[Message](16,OverflowStrategy.fail)

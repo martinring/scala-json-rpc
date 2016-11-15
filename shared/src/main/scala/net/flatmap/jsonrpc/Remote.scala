@@ -16,13 +16,27 @@ import net.flatmap.jsonrpc.ResponseResolver.DispatchRequest
 
 import scala.language.implicitConversions
 import net.flatmap.jsonrpc.util.CancellableFuture
+import shapeless._
 
-class Remote[I <: InterfaceLike] private (val interface: I, sink: ActorRef,
+import scala.annotation.implicitNotFound
+
+sealed trait RemoteFor[M <: MethodType] {
+  def remote: Remote[_]
+}
+
+object RemoteFor {
+  implicit def remoteFor[M <: MethodType, MS <: HList](method: M)
+    (implicit r: Remote[MS], evidence: BasisConstraint[M::HNil,MS]): RemoteFor[M] = new RemoteFor[M] {
+    def remote = r
+  }
+}
+
+class Remote[MS <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint] private (val interface: Interface[MS], sink: ActorRef,
                                        ids: Iterator[Id])
                                      (implicit ec: ExecutionContext) {
   val remote = this
 
-  private [jsonrpc] def sendRequest[P,R,E](rt: RequestType[_,P,R,E,_])(p: P)
+  private [jsonrpc] def sendRequest[P,R,E](rt: RequestType[P,R,E])(p: P)
                         (implicit timeout: Timeout): CancellableFuture[R] = {
     val id = ids.next()
 
@@ -50,7 +64,7 @@ class Remote[I <: InterfaceLike] private (val interface: I, sink: ActorRef,
     CancellableFuture(f,response.cancellable)
   }
 
-  private [jsonrpc] def sendNotification[P](nt: NotificationType[_,P,_])(p: P) = {
+  private [jsonrpc] def sendNotification[P](nt: NotificationType[P])(p: P) = {
     sink ! ResponseResolver.DispatchNotification(
       RequestMessage.Notification(nt.name,nt.paramEncoder(p))
     )
@@ -212,14 +226,14 @@ private class ResponseResolver extends ActorSubscriber with ActorLogging {
 }
 
 object Remote {
-  def apply[I <: InterfaceLike](interface: I)(implicit idProvider: Iterator[Id] = Id.standard,
-      ec: ExecutionContext): Flow[ResponseMessage,RequestMessage,Remote[I]] = {
+  def apply[MS <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint](interface: Interface[MS])(implicit idProvider: Iterator[Id] = Id.standard,
+      ec: ExecutionContext): Flow[ResponseMessage,RequestMessage,Remote[MS]] = {
     val sink = Sink.actorSubscriber(ResponseResolver.props)
     val source = Source.queue[RequestMessage](bufferSize = 1024, OverflowStrategy.backpressure)
     Flow.fromSinkAndSourceMat(sink,source) {
       (sink, source) =>
         sink ! source
-        new Remote[I](interface, sink, idProvider)
+        new Remote[MS](interface, sink, idProvider)
     }
   }
 }

@@ -1,83 +1,53 @@
 package net.flatmap.jsonrpc
 
 import akka.NotUsed
-import akka.event.Logging
 import akka.stream.scaladsl._
+import scala.language.implicitConversions
+import shapeless.ops.hlist.ToTraversable
 
-import scala.util.Try
-import scala.util.control.NonFatal
-
-sealed trait MethodImplementation[I <: Interface] {
+sealed trait MethodImplementation[MT <: MethodType] {
   def name: String
   val handler: Local.RequestHandler
 }
 
-class RequestImplementation[P,R,E,I <: Interface] private [jsonrpc] (
-  val request: RequestType[P,_,R,E,I],
+class RequestImplementation[P,R,E,RT <: RequestType[P,R,E]] private [jsonrpc] (
+  val request: RequestType[P,R,E],
   val handler: Local.RequestHandler
-) extends MethodImplementation[I] { def name = request.name }
+) extends MethodImplementation[RT] { def name = request.name }
 
-class NotificationImplementation[P,I <: Interface] private [jsonrpc] (
-  val notification: NotificationType[P,_,I],
+class NotificationImplementation[P,NT <: NotificationType[P]] private [jsonrpc] (
+  val notification: NotificationType[P],
   val handler: Local.RequestHandler
-) extends MethodImplementation[I] { def name = notification.name}
+) extends MethodImplementation[NT] { def name = notification.name}
 
-case class Implementation[I <: Interface]()
+import shapeless._
+import shapeless.LUBConstraint._
 
-abstract class Local[I <: Interface](val interface: I) {
-  implicit class ImplementableRequestType[P,R,E](request: RequestType[P,_,R,E,I]) {
-    def := (body: P => R): RequestImplementation[P,R,E,I] = {
-      val handler: Local.RequestHandler = {
-        case r: RequestMessage.Request if r.method == request.name =>
-          val param = request.paramDecoder.decodeJson(r.params)
-          param.fold({ failure =>
-            val err = ResponseError(ErrorCodes.InvalidParams, failure.message)
-            Some(ResponseMessage.Failure(r.id,err))
-          }, { param =>
-            Try(body(param)).map[Option[ResponseMessage]] { result =>
-              Some(ResponseMessage.Success(r.id,request.resultEncoder(result)))
-            } .recover[Option[ResponseMessage]] {
-              case err: ResponseError =>
-                Some(ResponseMessage.Failure(r.id,err))
-              case NonFatal(other) =>
-                val err = ResponseError(ErrorCodes.InternalError,other.getMessage)
-                Some(ResponseMessage.Failure(r.id,err))
-            }.get
-          })
-      }
-      new RequestImplementation[P,R,E,I](request, handler)
-    }
-  }
+class Implementation[MS <: HList : <<:[MethodType]#λ : IsDistinctConstraint] private (val impls: Seq[MethodImplementation[_]]) {
+  val handlers: Seq[Local.RequestHandler] = impls.toList.map(_.handler)
 
-  implicit class ImplementableNotificationType[P](notification: NotificationType[P,_,I]) {
-    def := (body: P => Unit): NotificationImplementation[P,I] = {
-      val handler: Local.RequestHandler = {
-        case n: RequestMessage.Notification if n.method == notification.name =>
-          val param = notification.paramDecoder.decodeJson(n.params)
-          param.fold[Option[ResponseMessage]]({ failure =>
-            val err = ResponseError(ErrorCodes.InvalidParams, failure.message)
-            Some(ResponseMessage.Failure(Id.Null, err))
-          }, { param =>
-            Try(body(param)).map(_ => None).recover[Option[ResponseMessage]] {
-              case err: ResponseError =>
-                Some(ResponseMessage.Failure(Id.Null, err))
-              case NonFatal(other) =>
-                val err = ResponseError(ErrorCodes.InternalError, other.getMessage)
-                Some(ResponseMessage.Failure(Id.Null, err))
-            }.get
-          })
-      }
-      new NotificationImplementation[P,I](notification, handler)
-    }
-  }
+  def and[MT <: MethodType](impl: MethodImplementation[MT])(implicit evidence: BasisConstraint[MT :: HNil, MS]): Implementation[MS] =
+    new Implementation[MS](impls :+ impl)
+}
 
-  case class Implementation(impls: MethodImplementation[I]*)
+object Implementation {
+  def apply[MS <: HList : <<:[MethodType]#λ : IsDistinctConstraint]: Implementation[MS] =
+    new Implementation[MS](Vector.empty)
+}
 
-  val implementation: Implementation
+abstract class Local[MS <: HList : <<:[MethodType]#λ : IsDistinctConstraint](val interface: Interface[MS]) {
+  implicit def methodImplToImplementation[MT <: MethodType](method: MethodImplementation[MT])(implicit evidence: BasisConstraint[MT :: HNil, MS]) =
+    Implementation[MS].and(method)
+
+  def implement[MT <: MethodType, IS <: MT :: HList](is: IS) =
+
+  def implement[P <: Product]()
+
+  val implementation: Implementation[MS]
 
   lazy val messageHandler = {
-    val notificationNames = interface.methods.map(_.name)
-    val requestNames      = interface.methods.map(_.name)
+    val notificationNames = interface.methods.toList[MethodType](interface.toTraversable).map(_.name)
+    val requestNames      = interface.methods.toList[MethodType](interface.toTraversable).map(_.name)
     val notFound: PartialFunction[RequestMessage,Option[ResponseMessage]] = {
       case RequestMessage.Request(id,method,_) if requestNames.contains(method) =>
         val err = ResponseError(ErrorCodes.MethodNotFound,s"request method not implemented: $method")
@@ -92,7 +62,7 @@ abstract class Local[I <: Interface](val interface: I) {
         val err = ResponseError(ErrorCodes.MethodNotFound,s"notification method not found: $method")
         Some(ResponseMessage.Failure(Id.Null,err))
     }
-    implementation.impls.map(_.handler).foldLeft(notFound) {
+    implementation.handlers.foldLeft(notFound) {
       case (a,b) => b orElse a
     }
   }
@@ -105,8 +75,4 @@ abstract class Local[I <: Interface](val interface: I) {
 object Local {
   type RequestFlow = Flow[RequestMessage,ResponseMessage,NotUsed]
   type RequestHandler = PartialFunction[RequestMessage,Option[ResponseMessage]]
-
-  def apply[I <: Interface](interface: I)(impls: MethodImplementation[I]*) = new Local[I](interface) {
-    val implementation: Implementation = Implementation(impls :_*)
-  }
 }

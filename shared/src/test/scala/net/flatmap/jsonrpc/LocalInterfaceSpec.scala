@@ -14,22 +14,21 @@ import org.scalatest.time._
 import scala.concurrent.duration._
 import scala.concurrent.{Future, Promise}
 
-class ExampleImpl extends Local(SimpleInterface) {
+class ExampleImpl extends Local(SimpleInterface.Interface) {
   private val promise = Promise[String]
   val notificationValue = promise.future
 
-  val implementation = Implementation(
-    interface.exampleRequest := { i =>
+  val implementation =
+    SimpleInterface.ExampleRequest.:=({ i =>
       i.x.toString
-    },
-    interface.exampleNotification := { s =>
+    }) and
+    SimpleInterface.ExampleNotification.:=({ s =>
       promise.trySuccess(s.x)
-    }
-  )
+    })
 }
 
-class ExampleImplMissing extends Local(SimpleInterface) {
-  val implementation = Implementation()
+class ExampleImplMissing extends Local(SimpleInterface.Interface) {
+  val implementation = Implementation[SimpleInterface.Interface.Shape]
 }
 
 class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
@@ -52,7 +51,7 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   "a local interface" should "process request messages" in {
     val local = new ExampleImpl
     val source = Source.single[RequestMessage](
-      RequestMessage.Request(Id.Long(0),SimpleInterface.exampleRequest.name,
+      RequestMessage.Request(Id.Long(0),SimpleInterface.ExampleRequest.name,
         Json.obj("x" -> Json.fromInt(42)))
     )
     val sink = Sink.seq[ResponseMessage]
@@ -69,7 +68,7 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   it should "process notification messages" in {
     val local = new ExampleImpl
     val source = Source.single[RequestMessage](
-      RequestMessage.Notification(SimpleInterface.exampleNotification.name,
+      RequestMessage.Notification(SimpleInterface.ExampleNotification.name,
         Json.obj("x" -> Json.fromString("boo!")))
     )
     val sink = Sink.seq[ResponseMessage]
@@ -83,7 +82,7 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   it should "return failure responses for missing implementations" in {
     val local = new ExampleImplMissing
     val source = Source.single[RequestMessage](
-      RequestMessage.Request(Id.Long(0),SimpleInterface.exampleRequest.name,
+      RequestMessage.Request(Id.Long(0),SimpleInterface.ExampleRequest.name,
         Json.obj("x" -> Json.fromInt(42)))
     )
     val sink = Sink.seq[ResponseMessage]
@@ -97,7 +96,7 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   it should "return failure responses for missing parameters" in {
     val local = new ExampleImpl
     val source = Source.single[RequestMessage](
-      RequestMessage.Request(Id.Long(0),SimpleInterface.exampleRequest.name,
+      RequestMessage.Request(Id.Long(0),SimpleInterface.ExampleRequest.name,
         Json.obj()
     ))
     val sink = Sink.seq[ResponseMessage]
