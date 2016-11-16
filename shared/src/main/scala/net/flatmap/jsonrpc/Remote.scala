@@ -17,24 +17,38 @@ import net.flatmap.jsonrpc.ResponseResolver.DispatchRequest
 import scala.language.implicitConversions
 import net.flatmap.jsonrpc.util.CancellableFuture
 import shapeless._
+import shapeless.ops.hlist.Selector
 
 import scala.annotation.implicitNotFound
 
-sealed trait RemoteFor[M <: MethodType] {
-  def remote: Remote[_]
-}
+@implicitNotFound("no suitable remote interface in scope to call ${MT}")
+sealed trait RemoteFor[MS <: HList, MT <: MethodType] extends Serializable
 
 object RemoteFor {
-  implicit def remoteFor[M <: MethodType, MS <: HList](method: M)
-    (implicit r: Remote[MS], evidence: BasisConstraint[M::HNil,MS]): RemoteFor[M] = new RemoteFor[M] {
-    def remote = r
-  }
+  implicit def remoteFor[MS <: HList, MT <: MethodType]
+    (implicit ev: Selector[MS,MT]): RemoteFor[MS,MT] =
+      new RemoteFor[MS,MT] { }
 }
 
-class Remote[MS <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint] private (val interface: Interface[MS], sink: ActorRef,
-                                       ids: Iterator[Id])
-                                     (implicit ec: ExecutionContext) {
-  val remote = this
+trait Remote[MS <: HList] {
+  implicit val lubConstraint: LUBConstraint[MS,MethodType]
+  implicit val distinctConstraint: IsDistinctConstraint[MS]
+
+  private [jsonrpc] def sendRequest[P,R,E](rt: RequestType[P,R,E])(p: P)
+                                          (implicit timeout: Timeout): CancellableFuture[R]
+
+  private [jsonrpc] def sendNotification[P](nt: NotificationType[P])(p: P)
+
+  def close()(implicit timeout: Timeout)
+}
+
+private [jsonrpc] class RemoteImpl[MS <: HList] (
+  interface: Interface[MS], sink: ActorRef, ids: Iterator[Id]
+)(
+  implicit ec: ExecutionContext
+) extends Remote[MS] {
+  implicit val lubConstraint: LUBConstraint[MS,MethodType] = interface.mslub
+  implicit val distinctConstraint: IsDistinctConstraint[MS] = interface.distinct
 
   private [jsonrpc] def sendRequest[P,R,E](rt: RequestType[P,R,E])(p: P)
                         (implicit timeout: Timeout): CancellableFuture[R] = {
@@ -226,14 +240,14 @@ private class ResponseResolver extends ActorSubscriber with ActorLogging {
 }
 
 object Remote {
-  def apply[MS <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint](interface: Interface[MS])(implicit idProvider: Iterator[Id] = Id.standard,
+  def apply[MS <: HList](interface: Interface[MS])(implicit idProvider: Iterator[Id] = Id.standard,
       ec: ExecutionContext): Flow[ResponseMessage,RequestMessage,Remote[MS]] = {
     val sink = Sink.actorSubscriber(ResponseResolver.props)
     val source = Source.queue[RequestMessage](bufferSize = 1024, OverflowStrategy.backpressure)
     Flow.fromSinkAndSourceMat(sink,source) {
       (sink, source) =>
         sink ! source
-        new Remote[MS](interface, sink, idProvider)
+        new RemoteImpl[MS](interface, sink, idProvider)
     }
   }
 }

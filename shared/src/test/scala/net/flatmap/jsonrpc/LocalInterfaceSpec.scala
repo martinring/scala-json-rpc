@@ -19,14 +19,15 @@ class ExampleImpl extends Local(SimpleInterface.Interface) {
   val notificationValue = promise.future
 
   import shapeless._
+  import shapeless.ops.hlist._
 
-  val implementation = implement(
-    SimpleInterface.ExampleRequest.:=({ i =>
+  val implementation = SimpleInterface.Interface.implement(
+    SimpleInterface.ExampleRequest := { i =>
       i.x.toString
-    }) ::
-    SimpleInterface.ExampleNotification.:=({ s =>
+    },
+    SimpleInterface.ExampleNotification := { s =>
       promise.trySuccess(s.x)
-    }) :: HNil
+    }
   )
 }
 

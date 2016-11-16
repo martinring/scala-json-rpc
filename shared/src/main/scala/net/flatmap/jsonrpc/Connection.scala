@@ -11,20 +11,20 @@ import shapeless.LUBConstraint._
 import scala.concurrent.ExecutionContext
 
 
-abstract class Connection[L <: HList : <<:[MethodType]#λ : IsDistinctConstraint, R <: HList : <<:[MethodType]#λ : IsDistinctConstraint] {
+abstract class Connection[L <: HList, R <: HList] {
   implicit def local: Local[L]
   implicit def remote: Remote[R]
   def close()(implicit timeout: Timeout) = remote.close()
 }
 
 object Connection { self =>
-  def apply[L <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint,R <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint](local: Interface[L], remote: Interface[R])(impl: Remote[R] => Local[L],
+  def apply[L <: HList,R <: HList](local: Interface[L], remote: Interface[R])(impl: Remote[R] => Local[L],
     codec: BidiFlow[Message,ByteString,ByteString,MessageWithBypass,NotUsed] = Codec.standard atop Framing.byteString
   )(implicit ec: ExecutionContext): Flow[ByteString,ByteString,Connection[L,R]] = {
     bidi(local,remote)(impl,codec)
   }
 
-  def bidi[L <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint,R <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConstraint,IO](local: Interface[L], remote: Interface[R])(impl: Remote[R] => Local[L],
+  def bidi[L <: HList,R <: HList,IO](local: Interface[L], remote: Interface[R])(impl: Remote[R] => Local[L],
     codec: BidiFlow[Message,IO,IO,MessageWithBypass,NotUsed]
   )(implicit ec: ExecutionContext): Flow[IO,IO,Connection[L,R]] = {
     val r = Remote(remote)
