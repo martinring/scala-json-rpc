@@ -92,6 +92,10 @@ class Interface[MS <: HList : LUBConstraint.<<:[MethodType]#λ : IsDistinctConst
 }
 
 object Interface {
-  def apply[A <: MethodType](method: A) =
-    new Interface[A :: HNil](method :: HNil)
+  def apply[P <: Product, L <: HList](p: P)(
+    implicit gen: Generic.Aux[P,L],
+    lub: LUBConstraint[L,MethodType],
+    distinct: IsDistinctConstraint[L],
+    toTraversable: ToTraversable.Aux[L,List,MethodType]
+  ) = new Interface(gen.to(p))
 }

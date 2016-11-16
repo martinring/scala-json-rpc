@@ -2,8 +2,10 @@ package net.flatmap.jsonrpc
 
 import akka.NotUsed
 import akka.stream.scaladsl._
+import shapeless.ops.hlist.{Selector, ToTraversable}
+
+import scala.annotation.implicitNotFound
 import scala.language.implicitConversions
-import shapeless.ops.hlist.ToTraversable
 
 sealed trait MethodImplementation[MT <: MethodType] {
   def name: String
@@ -30,18 +32,37 @@ class Implementation[MS <: HList : <<:[MethodType]#λ : IsDistinctConstraint] pr
     new Implementation[MS](impls :+ impl)
 }
 
+@implicitNotFound("the implementation contains implementations for methods not contained in the interface")
+trait Implements[IS <: HList, MS <: HList] extends Serializable
+object Implements {
+  type Aux[MS <: HList] = {
+    type λ[IS <: HList] = Implements[IS,MS]
+  }
+
+  implicit def hnilImplements[MS <: HList] = new Implements[HNil,MS] {}
+  implicit def hlistImplements[MT <: MethodType, MS <: HList, IS <: HList]
+    (implicit bct: Implements[IS,MS], sel: Selector[MS,MT]) =
+    new Implements[MethodImplementation[MT] :: IS,MS] { }
+}
+
 object Implementation {
   def apply[MS <: HList : <<:[MethodType]#λ : IsDistinctConstraint]: Implementation[MS] =
     new Implementation[MS](Vector.empty)
+
+  def apply[
+    MS <: HList : <<:[MethodType]#λ : IsDistinctConstraint,
+    IS <: HList : <<:[MethodImplementation[_]]#λ
+  ](is: IS)(implicit ev: Implements[IS,MS], traverse: ToTraversable.Aux[IS,List,MethodImplementation[_]]) =
+    new Implementation[MS](is.toList[MethodImplementation[_]])
 }
 
 abstract class Local[MS <: HList : <<:[MethodType]#λ : IsDistinctConstraint](val interface: Interface[MS]) {
   implicit def methodImplToImplementation[MT <: MethodType](method: MethodImplementation[MT])(implicit evidence: BasisConstraint[MT :: HNil, MS]) =
     Implementation[MS].and(method)
 
-  def implement[MT <: MethodType, IS <: MT :: HList](is: IS) =
-
-  def implement[P <: Product]()
+  def implement[IS <: HList : <<:[MethodImplementation[_]]#λ](is: IS)
+    (implicit ev: Implements[IS,MS], traverse: ToTraversable.Aux[IS,List,MethodImplementation[_]]): Implementation[MS] =
+    Implementation[MS,IS](is)
 
   val implementation: Implementation[MS]
 
