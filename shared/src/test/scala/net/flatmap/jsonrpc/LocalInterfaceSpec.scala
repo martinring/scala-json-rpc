@@ -22,10 +22,10 @@ class ExampleImpl extends Local(SimpleInterface.interface) {
   import shapeless.ops.hlist._
 
   val implementation = SimpleInterface.interface.implement(
-    SimpleInterface.ExampleRequest := { i =>
+    SimpleInterface.exampleRequest := { i =>
       i.x.toString
     },
-    SimpleInterface.ExampleNotification := { s =>
+    SimpleInterface.exampleNotification := { s =>
       promise.trySuccess(s.x)
     }
   )
@@ -55,7 +55,7 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   "a local interface" should "process request messages" in {
     val local = new ExampleImpl
     val source = Source.single[RequestMessage](
-      RequestMessage.Request(Id.Long(0),SimpleInterface.ExampleRequest.name,
+      RequestMessage.Request(Id.Long(0),SimpleInterface.exampleRequest.name,
         Json.obj("x" -> Json.fromInt(42)))
     )
     val sink = Sink.seq[ResponseMessage]
@@ -72,7 +72,7 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   it should "process notification messages" in {
     val local = new ExampleImpl
     val source = Source.single[RequestMessage](
-      RequestMessage.Notification(SimpleInterface.ExampleNotification.name,
+      RequestMessage.Notification(SimpleInterface.exampleNotification.name,
         Json.obj("x" -> Json.fromString("boo!")))
     )
     val sink = Sink.seq[ResponseMessage]
@@ -86,7 +86,7 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   it should "return failure responses for missing implementations" in {
     val local = new ExampleImplMissing
     val source = Source.single[RequestMessage](
-      RequestMessage.Request(Id.Long(0),SimpleInterface.ExampleRequest.name,
+      RequestMessage.Request(Id.Long(0),SimpleInterface.exampleRequest.name,
         Json.obj("x" -> Json.fromInt(42)))
     )
     val sink = Sink.seq[ResponseMessage]
@@ -100,7 +100,7 @@ class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   it should "return failure responses for missing parameters" in {
     val local = new ExampleImpl
     val source = Source.single[RequestMessage](
-      RequestMessage.Request(Id.Long(0),SimpleInterface.ExampleRequest.name,
+      RequestMessage.Request(Id.Long(0),SimpleInterface.exampleRequest.name,
         Json.obj()
     ))
     val sink = Sink.seq[ResponseMessage]

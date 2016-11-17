@@ -3,9 +3,11 @@ package net.flatmap.jsonrpc
 import akka.util.Timeout
 import io.circe.{Decoder, Encoder}
 import net.flatmap.jsonrpc.util.CancellableFuture
-import shapeless.LUBConstraint.<<:
 import shapeless._
+import shapeless.ops.hlist._
 
+import scala.collection.generic.CanBuildFrom
+import scala.collection.mutable
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -13,7 +15,7 @@ sealed trait MethodType {
   val name: String
 }
 
-abstract class RequestType[P,R,E] private [jsonrpc] (val name: String)(
+abstract class RequestType[P,R,E] (val name: String)(
   implicit val paramEncoder: Encoder[P], val paramDecoder: Decoder[P],
   val resultEncoder: Encoder[R], val resultDecoder: Decoder[R],
   val errorEncoder: Encoder[E], val errorDecoder: Decoder[E]) extends MethodType {
@@ -21,6 +23,15 @@ abstract class RequestType[P,R,E] private [jsonrpc] (val name: String)(
   type Param = P
   type Result = R
   type Error = E
+
+  def apply[T <: Product, PR <: HList, MS <: HList](p: T)(implicit genA: Generic.Aux[P,PR], genB: Generic.Aux[T,PR], remote: Remote[MS], evidence: RemoteFor[MS,this.type], timeout: Timeout): CancellableFuture[R] =
+    apply(genA.from(genB.to(p)))
+
+  def apply[T, MS <: HList](p: T)(implicit gen: Generic.Aux[P,T :: HNil], remote: Remote[MS], evidence:RemoteFor[MS,this.type], timeout: Timeout): CancellableFuture[R] =
+    apply(gen.from(p :: HNil))
+
+  def apply[PR <: HList,MS <: HList](p: PR)(implicit gen: Generic.Aux[P,PR], remote: Remote[MS], evidence: RemoteFor[MS,this.type], timeout: Timeout): CancellableFuture[R] =
+    apply(gen.from(p))
 
   def apply[MS <: HList](p: P)(implicit remote: Remote[MS], evidence: RemoteFor[MS,this.type], timeout: Timeout): CancellableFuture[R] =
     remote.sendRequest[P,R,E](this)(p)
@@ -48,11 +59,11 @@ abstract class RequestType[P,R,E] private [jsonrpc] (val name: String)(
   }
 }
 
-abstract class NotificationType[P] private [jsonrpc] (val name: String)(
+abstract class NotificationType[P] (val name: String)(
   implicit val paramEncoder: Encoder[P],
   val paramDecoder: Decoder[P]) extends MethodType {
 
-  def apply[MS <: HList](p: P)(implicit remote: Remote[MS], evidence: RemoteFor[MS,this.type], timeout: Timeout): Unit =
+  def apply[MS <: HList](p: P)(implicit remote: Remote[MS], evidence: RemoteFor[MS,this.type]): Unit =
     remote.sendNotification[P](this)(p)
 
   def := (body: P => Unit): NotificationImplementation[this.type] = {
@@ -76,26 +87,36 @@ abstract class NotificationType[P] private [jsonrpc] (val name: String)(
   }
 }
 
-import shapeless._
-import shapeless.ops.hlist._
-
 class Interface[MS <: HList](val methods: MS)
   (implicit val toTraversable: ToTraversable.Aux[MS,List,MethodType],
-   implicit val mslub: LUBConstraint[MS,MethodType],
-   implicit val distinct: IsDistinctConstraint[MS]) {
+   implicit val mslub: LUBConstraint[MS,MethodType]) {
 
   type Shape = MS
-  type Remote = net.flatmap.jsonrpc.Remote[MS]
-  type Local = net.flatmap.jsonrpc.Local[MS]
-  type Implementation = net.flatmap.jsonrpc.Implementation[MS]
+  type Remote = net.flatmap.jsonrpc.Remote[Shape]
+  type Local = net.flatmap.jsonrpc.Local[Shape]
+  type Implementation = net.flatmap.jsonrpc.Implementation[Shape]
 
   def and [MS2 <: HList]
     (other: Interface[MS2])
     (implicit prepend: Prepend[MS2,MS],
-     traversable: ToTraversable.Aux[Prepend[MS2,MS]#Out,List,MethodType],
-     lub: LUBConstraint[Prepend[MS2,MS]#Out,MethodType],
-     distinct: IsDistinctConstraint[Prepend[MS2,MS]#Out]) =
-    new Interface((other.methods ++ this.methods) : Prepend[MS2,MS]#Out)
+     cbf: CanBuildFrom[List[MethodType],MethodType,List[MethodType]]) = {
+    implicit val lub = new LUBConstraint[prepend.Out,MethodType] { }
+    implicit val traversable = new ToTraversable[prepend.Out,List] {
+      type Lub = MethodType
+      def builder(): mutable.Builder[Lub, List[Lub]] = cbf()
+      def append[LLub](
+        l: prepend.Out,
+        b: mutable.Builder[LLub, List[LLub]],
+        f: (Lub) => LLub
+      ): Unit = {
+        val list =
+          other.methods.toList(other.toTraversable) ++
+            methods.toList(toTraversable)
+        b ++= list.map(f)
+      }
+    }
+    new Interface(other.methods ++ this.methods)
+  }
 
   def implement[P <: Product, IS <: HList](is: P)(
      implicit

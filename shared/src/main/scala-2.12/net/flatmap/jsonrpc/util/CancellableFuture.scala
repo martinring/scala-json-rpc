@@ -26,7 +26,6 @@ case class CancellableFuture[+T](future: Future[T], cancellable: Cancellable) ex
                   (implicit executor: scala.concurrent.ExecutionContext): scala.concurrent.Future[S] = future.transform(f)
   def transformWith[S](f: scala.util.Try[T] => scala.concurrent.Future[S])(implicit executor: scala.concurrent.ExecutionContext): scala.concurrent.Future[S] =
     future.transformWith(f)
-
 }
 
 object CancellableFuture {

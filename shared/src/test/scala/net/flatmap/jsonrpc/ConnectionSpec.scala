@@ -21,12 +21,12 @@ class SimpleDependentImpl(implicit val remote: Remote[SimpleInterface.interface.
   implicit val requestTimeout = Timeout(1,TimeUnit.SECONDS)
 
   val implementation = SimpleInterface.interface.implement((
-    SimpleInterface.ExampleRequest := { i =>
+    SimpleInterface.exampleRequest := { i =>
       if (i.x < 0) sys.error("some error")
       i.x.toString
     },
-    SimpleInterface.ExampleNotification := { i =>
-      SimpleInterface.ExampleNotification(ExampleNotificationParams("foo"))
+    SimpleInterface.exampleNotification := { i =>
+      SimpleInterface.exampleNotification(ExampleNotificationParams("foo"))
     }
   ))
 
@@ -50,7 +50,7 @@ class ConnectionSpec extends AsyncFlatSpec with Matchers {
 
     import connection.remote
 
-    SimpleInterface.ExampleRequest(ExampleRequestParams(17)).map { x =>
+    SimpleInterface.exampleRequest(ExampleRequestParams(17)).map { x =>
       connection.close()
       x shouldBe "17"
     }

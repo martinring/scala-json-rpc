@@ -51,7 +51,7 @@ class Implementation[MS <: HList] private (val impls: Seq[MethodImplementation[_
   def and[MT <: MethodType](impl: MethodImplementation[MT])(implicit evidence: BasisConstraint[MT :: HNil, MS]): Implementation[MS] =
     new Implementation[MS](impls :+ impl)
 
-  def and[MS2 <: HList : <<:[MethodType]#λ : IsDistinctConstraint : BasisConstraint.Basis[MS]#λ](impl: Implementation[MS2]): Implementation[MS] =
+  def and[MS2 <: HList : <<:[MethodType]#λ : BasisConstraint.Basis[MS]#λ](impl: Implementation[MS2]): Implementation[MS] =
     new Implementation[MS](impls ++ impl.impls)
 }
 

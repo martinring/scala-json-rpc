@@ -2,8 +2,6 @@ package net.flatmap.jsonrpc
 
 import io.circe._
 
-import scala.concurrent.Promise
-
 sealed trait Id
 object Id {
   case class Long(value: scala.Long) extends Id

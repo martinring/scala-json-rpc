@@ -31,9 +31,6 @@ object RemoteFor {
 }
 
 trait Remote[MS <: HList] {
-  implicit val lubConstraint: LUBConstraint[MS,MethodType]
-  implicit val distinctConstraint: IsDistinctConstraint[MS]
-
   private [jsonrpc] def sendRequest[P,R,E](rt: RequestType[P,R,E])(p: P)
                                           (implicit timeout: Timeout): CancellableFuture[R]
 
@@ -47,9 +44,6 @@ private [jsonrpc] class RemoteImpl[MS <: HList] (
 )(
   implicit ec: ExecutionContext
 ) extends Remote[MS] {
-  implicit val lubConstraint: LUBConstraint[MS,MethodType] = interface.mslub
-  implicit val distinctConstraint: IsDistinctConstraint[MS] = interface.distinct
-
   private [jsonrpc] def sendRequest[P,R,E](rt: RequestType[P,R,E])(p: P)
                         (implicit timeout: Timeout): CancellableFuture[R] = {
     val id = ids.next()
