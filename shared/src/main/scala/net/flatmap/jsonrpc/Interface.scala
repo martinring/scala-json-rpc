@@ -89,18 +89,13 @@ class Interface[MS <: HList](val methods: MS)
   type Local = net.flatmap.jsonrpc.Local[MS]
   type Implementation = net.flatmap.jsonrpc.Implementation[MS]
 
-  def and [T <: MethodType](other: T)(
-    implicit toTraversable: ToTraversable.Aux[T :: MS,List,MethodType],
-    distinct: IsDistinctConstraint[T :: MS]): Interface[T :: MS] = other match {
-    case other =>
-      new Interface[T :: MS](other :: methods)
-  }
-
-  def and [MS2 <: HList, MSO <: HList : IsDistinctConstraint : <<:[MethodType]#λ]
+  def and [MS2 <: HList]
     (other: Interface[MS2])
-    (implicit prepend: Prepend.Aux[MS,MS2,MSO],
-     traverse: ToTraversable.Aux[MSO,List,MethodType]): Interface[MSO] =
-    new Interface[MSO](methods ++ other.methods)
+    (implicit prepend: Prepend[MS2,MS],
+     traversable: ToTraversable.Aux[Prepend[MS2,MS]#Out,List,MethodType],
+     lub: LUBConstraint[Prepend[MS2,MS]#Out,MethodType],
+     distinct: IsDistinctConstraint[Prepend[MS2,MS]#Out]) =
+    new Interface((other.methods ++ this.methods) : Prepend[MS2,MS]#Out)
 
   def implement[P <: Product, IS <: HList](is: P)(
      implicit
@@ -114,8 +109,8 @@ class Interface[MS <: HList](val methods: MS)
 object Interface {
   def apply() = new Interface[HNil](HNil)
 
-  def apply[MT <: MethodType](single: MT) =
-    new Interface(single :: HNil)
+  def apply[MT <: MethodType](single: MT): Interface[MT :: HNil] =
+    new Interface[MT :: HNil](single :: HNil)
 
   def apply[P <: Product, MS <: HList](p: P)(
     implicit
@@ -123,5 +118,5 @@ object Interface {
     lub: LUBConstraint[MS,MethodType],
     distinct: IsDistinctConstraint[MS],
     toTraversable: ToTraversable.Aux[MS,List,MethodType]
-  ) = new Interface(gen.to(p))
+  ): Interface[MS] = new Interface(gen.to(p))
 }

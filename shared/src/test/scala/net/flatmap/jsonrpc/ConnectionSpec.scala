@@ -15,12 +15,12 @@ import org.scalatest.time.{Milliseconds, Span}
 import scala.collection.immutable
 import scala.concurrent.{Future, Promise}
 
-class SimpleDependentImpl(implicit val remote: Remote[SimpleInterface.Interface.Shape]) extends Local(SimpleInterface.Interface) {
+class SimpleDependentImpl(implicit val remote: Remote[SimpleInterface.interface.Shape]) extends Local(SimpleInterface.interface) {
   private val promise   = Promise[String]
   val notificationValue = promise.future
   implicit val requestTimeout = Timeout(1,TimeUnit.SECONDS)
 
-  val implementation = SimpleInterface.Interface.implement((
+  val implementation = SimpleInterface.interface.implement((
     SimpleInterface.ExampleRequest := { i =>
       if (i.x < 0) sys.error("some error")
       i.x.toString
@@ -42,7 +42,7 @@ class ConnectionSpec extends AsyncFlatSpec with Matchers {
   implicit val requestTimeout = Timeout(1,TimeUnit.SECONDS)
 
   "a connection" should "be short-circuitable" in {
-    val flow = Connection(SimpleInterface.Interface,SimpleInterface.Interface) {
+    val flow = Connection(SimpleInterface.interface,SimpleInterface.interface) {
       new SimpleDependentImpl()(_)
     }
 
@@ -57,7 +57,7 @@ class ConnectionSpec extends AsyncFlatSpec with Matchers {
   }
 
   it should "survive failures" in {
-    val flow = Connection.bidi(SimpleInterface.Interface,SimpleInterface.Interface)(
+    val flow = Connection.bidi(SimpleInterface.interface,SimpleInterface.interface)(
       new SimpleDependentImpl()(_),BidiFlow.fromFlows(Flow[Message],Flow[Message]))
 
     val messages = immutable.Iterable(
@@ -83,7 +83,7 @@ class ConnectionSpec extends AsyncFlatSpec with Matchers {
   }
 
   it should "survive parser failures" in {
-    val flow = Connection(SimpleInterface.Interface,SimpleInterface.Interface)(new SimpleDependentImpl()(_))
+    val flow = Connection(SimpleInterface.interface,SimpleInterface.interface)(new SimpleDependentImpl()(_))
     val okMessage = Codec.encodeRequest(
       RequestMessage.Request(Id.Long(0), "example/request", Json.obj("x" -> Json.fromInt(4)))
     ).noSpaces

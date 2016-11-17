@@ -7,7 +7,7 @@ val versions = new {
   val circe = "0.6.0"
   val akka = "2.4.12"
   val scalatest = "3.0.0"
-  val scala = "2.11.8"
+  val scala = "2.12.0"
 }
 
 lazy val root = project.in(file("."))
@@ -28,6 +28,7 @@ lazy val lib: CrossProject = crossProject.in(file("."))
     scalaVersion := versions.scala,
     scalacOptions ++= Seq("-deprecation","-feature"),
     organization := "net.flatmap",
+    crossScalaVersions := Seq("2.11.8","2.12.0"),
     libraryDependencies ++= Seq(
       "io.circe" %%% "circe-core",
       "io.circe" %%% "circe-generic",
@@ -35,10 +36,8 @@ lazy val lib: CrossProject = crossProject.in(file("."))
     ).map(_ % versions.circe),
     libraryDependencies += "org.scalatest" %%% "scalatest" % versions.scalatest % "test"
   ).jsSettings(
-    crossScalaVersions := Seq("2.11.8"),
     libraryDependencies += "eu.unicredit" %%% "akkajsactorstream" % ("0." + versions.akka)
   ).jvmSettings(
-    crossScalaVersions := Seq("2.11.8","2.12.0"),
     libraryDependencies += "com.typesafe.akka" %% "akka-stream" % versions.akka
   )
 

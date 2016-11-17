@@ -14,14 +14,14 @@ import org.scalatest.time._
 import scala.concurrent.duration._
 import scala.concurrent.{Future, Promise}
 
-class ExampleImpl extends Local(SimpleInterface.Interface) {
+class ExampleImpl extends Local(SimpleInterface.interface) {
   private val promise = Promise[String]
   val notificationValue = promise.future
 
   import shapeless._
   import shapeless.ops.hlist._
 
-  val implementation = SimpleInterface.Interface.implement(
+  val implementation = SimpleInterface.interface.implement(
     SimpleInterface.ExampleRequest := { i =>
       i.x.toString
     },
@@ -31,8 +31,8 @@ class ExampleImpl extends Local(SimpleInterface.Interface) {
   )
 }
 
-class ExampleImplMissing extends Local(SimpleInterface.Interface) {
-  val implementation = Implementation[SimpleInterface.Interface.Shape]
+class ExampleImplMissing extends Local(SimpleInterface.interface) {
+  val implementation = Implementation[SimpleInterface.interface.Shape]
 }
 
 class LocalInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {

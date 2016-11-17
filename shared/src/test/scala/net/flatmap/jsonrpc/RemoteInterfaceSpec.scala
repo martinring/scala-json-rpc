@@ -11,7 +11,6 @@ import net.flatmap.jsonrpc.SimpleInterface.ExampleNotificationParams
 import org.scalatest._
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.time._
-import shapeless.HNil
 
 import scala.concurrent.duration._
 import scala.concurrent.Promise
@@ -33,9 +32,7 @@ object SimpleInterface {
   object ExampleNotification extends
     NotificationType[ExampleNotificationParams]("example/notification")
 
-  object Interface extends Interface(
-    ExampleRequest :: ExampleNotification :: HNil
-  )
+  val interface = Interface(ExampleRequest,ExampleNotification)
 }
 
 object OtherInterface {
@@ -44,10 +41,12 @@ object OtherInterface {
 
   object AnotherRequest extends RequestType[ExampleNotificationParams,String,Unit]("example/anotherRequest")
 
-  object Interface extends Interface(
-    AnotherRequest :: HNil
-  )
+  val interface = Interface(AnotherRequest)
 }
+
+/*object CombinedInterface {
+  val interface = SimpleInterface.interface and OtherInterface.interface
+}*/
 
 class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   implicit val system = ActorSystem("test-system",testConfig)
@@ -67,7 +66,7 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
   }
 
   "a remote interface" should "produce request messages" in {
-    val remote = Remote(SimpleInterface.Interface)
+    val remote = Remote(SimpleInterface.interface)
     val source = Source.maybe[ResponseMessage]
     val sink = Sink.seq[RequestMessage]
     import SimpleInterface._
@@ -86,7 +85,7 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
   }
 
   it should "produce notification messages" in {
-    val remote = Remote(SimpleInterface.Interface)
+    val remote = Remote(SimpleInterface.interface)
     val source = Source.maybe[ResponseMessage]
     val sink = Sink.seq[RequestMessage]
     implicit val ((p,r), f) =
@@ -104,7 +103,7 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
   }
 
   it should "complete the futures when responding to a request" in {
-    val remote = Remote(SimpleInterface.Interface)
+    val remote = Remote(SimpleInterface.interface)
     val source = Source.queue[ResponseMessage](3,OverflowStrategy.fail)
     val sink = Sink.seq[RequestMessage]
 
@@ -137,7 +136,7 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
   }
 
   it should "fail the futures when responding to a request with an error" in {
-    val remote = Remote(SimpleInterface.Interface)
+    val remote = Remote(SimpleInterface.interface)
     val source = Source.maybe[ResponseMessage]
     val sink = Sink.seq[RequestMessage]
 
@@ -164,7 +163,7 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
   }
 
   it should "fail the futures when a request is not answered" in {
-    val remote = Remote(SimpleInterface.Interface)
+    val remote = Remote(SimpleInterface.interface)
     val source = Source.maybe[ResponseMessage]
     val sink = Sink.seq[RequestMessage]
 
@@ -191,7 +190,7 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
   }
 
   it should "send cancellation notifications for cancelled futures" in {
-    val remote = Remote(SimpleInterface.Interface)
+    val remote = Remote(SimpleInterface.interface)
     val source = Source.maybe[ResponseMessage]
     val sink = Sink.seq[RequestMessage]
 
