@@ -8,9 +8,10 @@ import akka.stream.scaladsl.{BidiFlow, Flow, Keep, Sink, Source}
 import akka.util.{ByteString, Timeout}
 import io.circe.Json
 import net.flatmap.jsonrpc.SimpleInterface.{ExampleNotificationParams, ExampleRequestParams}
-import org.scalatest.{AsyncFlatSpec, FlatSpec, Matchers}
+import org.scalatest._
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.time.{Milliseconds, Span}
+import scala.concurrent.duration._
 
 import scala.collection.immutable
 import scala.concurrent.{Future, Promise}
@@ -26,7 +27,7 @@ class SimpleDependentImpl(implicit val remote: Remote[SimpleInterface.interface.
       i.x.toString
     },
     SimpleInterface.exampleNotification := { i =>
-      SimpleInterface.exampleNotification(ExampleNotificationParams("foo"))
+      SimpleInterface.exampleNotification("foo")
     }
   ))
 
@@ -35,11 +36,20 @@ class SimpleDependentImpl(implicit val remote: Remote[SimpleInterface.interface.
 /**
   * Created by martin on 24.10.16.
   */
-class ConnectionSpec extends AsyncFlatSpec with Matchers {
+class ConnectionSpec extends AsyncFlatSpec with Matchers with ScalaFutures {
   implicit val system = ActorSystem("connection_test",testConfig)
   implicit val materializer = ActorMaterializer()
-  implicit val dispatcher = system.dispatcher
+  implicit override def executionContext =
+    scala.concurrent.ExecutionContext.Implicits.global
   implicit val requestTimeout = Timeout(1,TimeUnit.SECONDS)
+
+  override def withFixture(test: NoArgAsyncTest): FutureOutcome = {
+    val p = Promise[Outcome]
+    system.scheduler.scheduleOnce(0.seconds) {
+      p.completeWith(test.apply().toFuture)
+    }
+    new FutureOutcome(p.future)
+  }
 
   "a connection" should "be short-circuitable" in {
     val flow = Connection(SimpleInterface.interface,SimpleInterface.interface) {
@@ -50,7 +60,7 @@ class ConnectionSpec extends AsyncFlatSpec with Matchers {
 
     import connection.remote
 
-    SimpleInterface.exampleRequest(ExampleRequestParams(17)).map { x =>
+    SimpleInterface.exampleRequest(17).map { x =>
       connection.close()
       x shouldBe "17"
     }

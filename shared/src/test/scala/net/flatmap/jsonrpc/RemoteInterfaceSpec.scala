@@ -40,11 +40,11 @@ object OtherInterface {
   import io.circe.generic.auto._
   import SimpleInterface._
 
-  case class AnotherRequestParams(x: Int, y: String)
+  case class AnotherNotificationParams(x: Int, y: String)
 
-  object AnotherRequest extends RequestType[AnotherRequestParams,String,Unit]("example/anotherRequest")
+  object AnotherNotification extends NotificationType[AnotherNotificationParams]("example/anotherNotification")
 
-  val interface = Interface(AnotherRequest)
+  val interface = Interface(AnotherNotification)
 }
 
 object CombinedInterface {
@@ -93,13 +93,13 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
     val sink = Sink.seq[RequestMessage]
     implicit val ((p,r), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
-    OtherInterface.AnotherRequest(4, "foo")
-    SimpleInterface.exampleNotification(ExampleNotificationParams("bar"))
+    OtherInterface.AnotherNotification(4, "foo")
+    SimpleInterface.exampleNotification("bar")
     r.close()
     f.map { x =>
       x should have length 2
       x shouldBe Seq(
-        RequestMessage.Notification("example/anotherRequest",Json.obj("x" -> Json.fromString("foo"))),
+        RequestMessage.Notification("example/anotherNotification",Json.obj("x" -> Json.fromInt(4), "y" -> Json.fromString("foo"))),
         RequestMessage.Notification("example/notification",Json.obj("x" -> Json.fromString("bar")))
       )
     }
@@ -115,9 +115,9 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
     implicit val ((p,r), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
 
-    val x = exampleRequest(ExampleRequestParams(42)) // Id.Long(0)
-    val y = exampleRequest(ExampleRequestParams(17)) // Id.Long(1)
-    val z = exampleRequest(ExampleRequestParams(19)) // Id.Long(2)
+    val x = exampleRequest(42) // Id.Long(0)
+    val y = exampleRequest(17) // Id.Long(1)
+    val z = exampleRequest(19) // Id.Long(2)
 
     // respond to calls
     p.offer(ResponseMessage.Success(Id.Long(1),Json.fromString("y")))
@@ -148,9 +148,9 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
     implicit val ((p,r), f) =
       source.viaMat(remote)(Keep.both).toMat(sink)(Keep.both).run()
 
-    val x = exampleRequest(ExampleRequestParams(42)) // Id.Long(0)
-    val y = exampleRequest(ExampleRequestParams(17)) // Id.Long(1)
-    val z = exampleRequest(ExampleRequestParams(19)) // Id.Long(2)
+    val x = exampleRequest(42) // Id.Long(0)
+    val y = exampleRequest(17) // Id.Long(1)
+    val z = exampleRequest(19) // Id.Long(2)
 
     // respond to call "y"
     p.success(Some(ResponseMessage.Failure(Id.Long(1), ResponseError(
@@ -175,9 +175,9 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
 
     import SimpleInterface._
 
-    val x = exampleRequest(ExampleRequestParams(5)) // Id.Long(0)
-    val y = exampleRequest(ExampleRequestParams(17)) // Id.Long(1)
-    val z = exampleRequest(ExampleRequestParams(19)) // Id.Long(2)
+    val x = exampleRequest(5) // Id.Long(0)
+    val y = exampleRequest(17) // Id.Long(1)
+    val z = exampleRequest(19) // Id.Long(2)
 
     // respond to call "y"
     p.success(Some(ResponseMessage.Failure(Id.Long(1), ResponseError(
@@ -202,9 +202,9 @@ class RemoteInterfaceSpec extends AsyncFlatSpec with Matchers with ScalaFutures 
 
     import SimpleInterface._
 
-    val x = exampleRequest(ExampleRequestParams(42)) // Id.Long(0)
-    val y = exampleRequest(ExampleRequestParams(17)) // Id.Long(1)
-    val z = exampleRequest(ExampleRequestParams(19)) // Id.Long(2)
+    val x = exampleRequest(42) // Id.Long(0)
+    val y = exampleRequest(17) // Id.Long(1)
+    val z = exampleRequest(19) // Id.Long(2)
 
     // cancel "y"
     y.cancel()

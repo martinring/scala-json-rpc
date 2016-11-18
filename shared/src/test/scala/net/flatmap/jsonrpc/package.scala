@@ -9,7 +9,9 @@ package object jsonrpc {
   def testConfig = ConfigFactory.parseString(
     """
       |akka {
+      |  stdout-loglevel = "OFF"
       |  loglevel = "INFO"
+      |  loggers = []
       |  log-dead-letters-during-shutdown = off
       |}
     """.stripMargin)

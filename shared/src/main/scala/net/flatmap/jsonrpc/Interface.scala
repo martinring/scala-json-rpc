@@ -63,6 +63,15 @@ abstract class NotificationType[P] (val name: String)(
   implicit val paramEncoder: Encoder[P],
   val paramDecoder: Decoder[P]) extends MethodType {
 
+  def apply[T <: Product, PR <: HList, MS <: HList](p: T)(implicit genA: Generic.Aux[P,PR], genB: Generic.Aux[T,PR], remote: Remote[MS], evidence: RemoteFor[MS,this.type]): Unit =
+    apply(genA.from(genB.to(p)))
+
+  def apply[T, MS <: HList](p: T)(implicit gen: Generic.Aux[P,T :: HNil], remote: Remote[MS], evidence:RemoteFor[MS,this.type]): Unit =
+    apply(gen.from(p :: HNil))
+
+  def apply[PR <: HList,MS <: HList](p: PR)(implicit gen: Generic.Aux[P,PR], remote: Remote[MS], evidence: RemoteFor[MS,this.type]): Unit =
+    apply(gen.from(p))
+
   def apply[MS <: HList](p: P)(implicit remote: Remote[MS], evidence: RemoteFor[MS,this.type]): Unit =
     remote.sendNotification[P](this)(p)
 
